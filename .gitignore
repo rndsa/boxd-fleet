@@ -1,0 +1,24 @@
+# Secrets & runtime data (never commit)
+.env
+.env.*
+!.env.example
+data/*.db*
+!data/.gitkeep
+
+# Dependencies & caches
+node_modules/
+.npm/
+.wrangler/
+
+# Logs & temporary files
+*.log
+logs/
+tmp/
+.claude/
+public/preview_*.png
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

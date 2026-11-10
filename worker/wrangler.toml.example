@@ -1,0 +1,12 @@
+name = "boxd-fleet-worker"
+main = "src/worker.js"
+compatibility_date = "2026-10-01"
+account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+workers_dev = true
+
+routes = [
+  { pattern = "console.example.com/*", zone_name = "example.com" }
+]
+
+[vars]
+BACKEND_HOST = "your-origin-tunnel.trycloudflare.com"
