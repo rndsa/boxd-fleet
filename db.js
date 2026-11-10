@@ -7,7 +7,9 @@ if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
-const dbPath = path.join(dbDir, 'boxd.db');
+const dbPath = process.env.BOXD_DB_PATH
+  ? path.resolve(process.env.BOXD_DB_PATH)
+  : path.join(dbDir, 'boxd.db');
 const db = new Database(dbPath);
 
 // Enable WAL mode for performance & concurrency
@@ -24,12 +26,17 @@ db.exec(`
     display_name TEXT,
     org_id TEXT,
     org_name TEXT,
+    org_slug TEXT,
+    key_scope TEXT DEFAULT 'unknown',
+    home_region TEXT DEFAULT 'fra',
+    enabled_regions TEXT DEFAULT '[]',
     balance_micro INTEGER DEFAULT 0,
-    currency TEXT DEFAULT 'EUR',
+    currency TEXT DEFAULT 'USD',
     max_vms INTEGER DEFAULT 0,
     status TEXT DEFAULT 'active',
     last_error TEXT,
     notes TEXT,
+    last_synced_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -60,6 +67,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_allowed_ips_ip ON allowed_ips(ip);
 `);
 
+// Safe schema migration for existing DBs
+try {
+  const existingCols = new Set(db.prepare('PRAGMA table_info(accounts)').all().map(c => c.name));
+  const migrations = [
+    ['org_slug', 'TEXT'],
+    ['key_scope', "TEXT DEFAULT 'unknown'"],
+    ['home_region', "TEXT DEFAULT 'fra'"],
+    ['enabled_regions', "TEXT DEFAULT '[]'"],
+    ['last_synced_at', 'INTEGER']
+  ];
+  for (const [col, def] of migrations) {
+    if (!existingCols.has(col)) {
+      db.exec(`ALTER TABLE accounts ADD COLUMN ${col} ${def}`);
+    }
+  }
+} catch (e) {
+  console.error('DB migration warning:', e.message);
+}
+
 // Seed default localhost & optional host IP if not exists
 try {
   const insertIp = db.prepare('INSERT OR IGNORE INTO allowed_ips (ip, label, created_at) VALUES (?, ?, ?)');
@@ -73,27 +99,35 @@ try {
 module.exports = {
   db,
   getAccounts() {
-    return db.prepare("SELECT id, label, user_id, display_name, org_id, org_name, balance_micro, currency, max_vms, status, last_error, notes, created_at, updated_at, (substr(api_key, 1, 8) || '...' || substr(api_key, -4)) as masked_key FROM accounts ORDER BY created_at ASC").all();
+    return db.prepare("SELECT id, label, user_id, display_name, org_id, org_name, org_slug, key_scope, home_region, enabled_regions, balance_micro, currency, max_vms, status, last_error, notes, last_synced_at, created_at, updated_at, (substr(api_key, 1, 8) || '...' || substr(api_key, -4)) as masked_key FROM accounts ORDER BY created_at ASC").all();
   },
   getAccountById(id) {
     return db.prepare('SELECT * FROM accounts WHERE id = ?').get(id);
   },
-  createAccount({ id, label, api_key, user_id, display_name, org_id, org_name, balance_micro, currency, max_vms, status, last_error, notes }) {
+  getAccountByApiKey(apiKey) {
+    return db.prepare('SELECT id, label, status FROM accounts WHERE api_key = ?').get(apiKey);
+  },
+  createAccount({ id, label, api_key, user_id, display_name, org_id, org_name, org_slug, key_scope, home_region, enabled_regions, balance_micro, currency, max_vms, status, last_error, notes, last_synced_at }) {
     const now = Date.now();
+    const regionsStr = Array.isArray(enabled_regions) ? JSON.stringify(enabled_regions) : (enabled_regions || '[]');
     db.prepare(`
-      INSERT INTO accounts (id, label, api_key, user_id, display_name, org_id, org_name, balance_micro, currency, max_vms, status, last_error, notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, label, api_key, user_id || null, display_name || null, org_id || null, org_name || null, balance_micro || 0, currency || 'EUR', max_vms || 0, status || 'active', last_error || null, notes || '', now, now);
+      INSERT INTO accounts (id, label, api_key, user_id, display_name, org_id, org_name, org_slug, key_scope, home_region, enabled_regions, balance_micro, currency, max_vms, status, last_error, notes, last_synced_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, label, api_key, user_id || null, display_name || null, org_id || null, org_name || null, org_slug || null, key_scope || 'unknown', home_region || 'fra', regionsStr, balance_micro || 0, currency || 'USD', max_vms || 0, status || 'active', last_error || null, notes || '', last_synced_at || null, now, now);
     return this.getAccountById(id);
   },
   updateAccount(id, updates) {
-    const allowed = ['label', 'user_id', 'display_name', 'org_id', 'org_name', 'balance_micro', 'currency', 'max_vms', 'status', 'last_error', 'notes'];
+    const allowed = ['label', 'user_id', 'display_name', 'org_id', 'org_name', 'org_slug', 'key_scope', 'home_region', 'enabled_regions', 'balance_micro', 'currency', 'max_vms', 'status', 'last_error', 'notes', 'last_synced_at'];
     const sets = [];
     const values = [];
     for (const key of allowed) {
       if (updates[key] !== undefined) {
         sets.push(`${key} = ?`);
-        values.push(updates[key]);
+        if (key === 'enabled_regions' && Array.isArray(updates[key])) {
+          values.push(JSON.stringify(updates[key]));
+        } else {
+          values.push(updates[key]);
+        }
       }
     }
     if (sets.length === 0) return this.getAccountById(id);

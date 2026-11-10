@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BOXD FLEET — Cloud MicroVM Console</title>
+  <title>BOXD FLEET — MicroVM Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -13,10 +13,9 @@
 <body>
   <!-- MAIN APP CONTAINER -->
   <div id="appContainer" class="window-shell">
-    
+
     <!-- LEFT SIDEBAR -->
     <aside class="sidebar">
-      <!-- App Brand in Sidebar -->
       <div class="sidebar-brand" onclick="switchTab('overview')">
         <div style="display: flex; align-items: center; gap: 10px;">
           <div class="brand-square-logo"></div>
@@ -31,7 +30,6 @@
         </div>
       </div>
 
-      <!-- Nav Menu Items -->
       <nav class="nav-menu">
         <a href="#overview" class="nav-item active" id="tabBtn-overview" onclick="switchTab('overview')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -79,14 +77,13 @@
         </a>
       </nav>
 
-      <!-- Sidebar Footer -->
       <div class="sidebar-footer">
         <a href="#register" class="nav-item" onclick="openAddAccountModal()">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-          <span>Add Account</span>
+          <span>Tambah Akun</span>
         </a>
 
         <a href="https://docs.boxd.sh" target="_blank" rel="noopener" class="nav-item">
@@ -95,14 +92,14 @@
             <polyline points="15 3 21 3 21 9"/>
             <line x1="10" y1="14" x2="21" y2="3"/>
           </svg>
-          <span>Docs ↗</span>
+          <span>Docs</span>
         </a>
       </div>
     </aside>
 
     <!-- MAIN WORKSPACE -->
     <main class="main-workspace">
-      
+
       <!-- TOP HEADER BAR -->
       <header class="top-header">
         <div class="search-box">
@@ -110,22 +107,21 @@
             <circle cx="11" cy="11" r="8"/>
             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
-          <input type="text" id="searchInput" placeholder="Search..." aria-label="Search" oninput="onGlobalSearch()">
+          <input type="text" id="searchInput" placeholder="Cari VM atau akun..." aria-label="Search" oninput="onGlobalSearch()">
         </div>
 
         <div class="user-utility">
           <div class="account-select-pill">
-            <span class="asp-lbl">ACC</span>
-            <select id="accountFilter" onchange="onAccountFilterChange()" aria-label="Filter microVMs by account" title="Filter by account">
-              <option value="all">All Accounts</option>
+            <select id="accountFilter" onchange="onAccountFilterChange()" aria-label="Filter microVMs by account" title="Filter akun">
+              <option value="all">Semua Akun</option>
             </select>
           </div>
 
-          <button class="theme-toggle-btn font-mono" id="themeToggleBtn" onclick="toggleNeoTheme()" aria-label="Toggle Theme" title="Switch Theme">
-            <span id="themeToggleIcon">☀️</span> <span id="themeToggleLabel">LIGHT</span>
+          <button class="theme-toggle-btn font-mono" id="themeToggleBtn" onclick="toggleNeoTheme()" aria-label="Toggle Theme" title="Ganti Tema">
+            <span id="themeToggleIcon">☀️</span><span id="themeToggleLabel" class="theme-toggle-lbl">LIGHT</span>
           </button>
 
-          <button class="icon-utility-btn" id="syncTelemetryBtn" onclick="fetchDashboardData()" aria-label="Sync" title="Sync">
+          <button class="icon-utility-btn" id="syncTelemetryBtn" onclick="fetchDashboardData()" aria-label="Sync" title="Refresh data">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="23 4 23 10 17 10"></polyline>
               <polyline points="1 20 1 14 7 14"></polyline>
@@ -135,257 +131,244 @@
         </div>
       </header>
 
-      <!-- ================= TAB CONTENT 1: OVERVIEW ================= -->
+      <!-- ================= TAB 1: OVERVIEW ================= -->
       <div id="tabContent-overview" class="tab-content active">
-        <!-- Clean Sub-Header Strip -->
         <section class="sub-header-strip">
           <div class="shs-left">
             <span class="shs-title">OVERVIEW</span>
             <span class="shs-divider">/</span>
-            <span class="shs-sub font-mono">NYC</span>
+            <span class="shs-sub font-mono" id="overviewRegionsLabel">FRA · NYC</span>
           </div>
-          <div class="shs-right" style="display: flex; align-items: center; gap: 8px;">
-            <span class="font-mono text-muted" style="font-size: 11px; font-weight: 700;">CLUSTER READY</span>
-            <button class="shield-badge-btn font-mono" onclick="openSecurityCenterModal()" title="Pusat Keamanan & Audit" aria-label="Security Status">
-              <span class="pulse-indicator-green"></span> 🛡️ SECURED
+          <div class="shs-right">
+            <span class="font-mono text-muted" id="overviewSyncMeta" style="font-size: 11px; font-weight: 700;"></span>
+            <button class="shield-badge-btn font-mono" onclick="openSecurityCenterModal()" title="Keamanan & Firewall" aria-label="Keamanan & Firewall">
+              <span class="pulse-indicator-green"></span>
+              <span>Keamanan</span>
             </button>
           </div>
         </section>
 
-        <!-- ROW 1: 4 Refined Metric Cards -->
         <section class="metrics-grid">
-          <!-- Metric Card 1: Total Fleet Capacity -->
           <div class="stat-card">
             <div class="stat-content">
               <span class="stat-label">QUOTA</span>
               <div class="stat-value-row">
-                <span class="stat-value font-mono" id="overviewStatQuota">100 VM</span>
-                <span class="trend-badge badge-green font-mono" id="overviewStatQuotaBadge">0 Active</span>
+                <span class="stat-value font-mono" id="overviewStatQuota">—</span>
+                <span class="stat-subpill badge-green-soft font-mono" id="overviewStatQuotaBadge">—</span>
               </div>
             </div>
           </div>
 
-          <!-- Metric Card 2: Allocated Compute -->
           <div class="stat-card">
             <div class="stat-content">
               <span class="stat-label">COMPUTE</span>
               <div class="stat-value-row">
-                <span class="stat-value font-mono" id="overviewStatVcpu">0 vCPU</span>
-                <span class="trend-badge badge-neutral font-mono" id="overviewStatRamBadge">0 GB RAM</span>
+                <span class="stat-value font-mono" id="overviewStatVcpu">—</span>
+                <span class="stat-subpill font-mono" id="overviewStatRamBadge">—</span>
               </div>
             </div>
           </div>
 
-          <!-- Metric Card 3: Credit Balance -->
           <div class="stat-card">
             <div class="stat-content">
-              <span class="stat-label">BALANCE</span>
+              <span class="stat-label">SALDO</span>
               <div class="stat-value-row">
                 <span class="stat-value font-mono text-emerald" id="statBalance">$0.00</span>
-                <span class="trend-badge badge-green font-mono">USD</span>
+                <span class="stat-subpill font-mono" id="overviewStatAccBadge">—</span>
               </div>
             </div>
           </div>
 
-          <!-- Metric Card 4: Compute Expenditure -->
           <div class="stat-card">
             <div class="stat-content">
-              <span class="stat-label">TOTAL SPEND</span>
+              <span class="stat-label">PEMAKAIAN</span>
               <div class="stat-value-row">
-                <span class="stat-value font-mono" id="overviewStatSpend">$0.0000</span>
-                <span class="trend-badge badge-neutral font-mono">USD</span>
+                <span class="stat-value font-mono" id="overviewStatSpend">$0.00</span>
+                <span class="stat-subpill font-mono">Total</span>
               </div>
             </div>
           </div>
         </section>
 
-        <!-- FLEET INSTANCES (CORE CONSOLE) -->
         <section class="dashboard-row" style="margin-top: 14px;">
-          <div class="content-card">
+          <div class="content-card overview-fleet-card">
             <div class="card-header">
               <h2 class="card-title">Fleet Instances</h2>
-              <a href="#machines" class="card-action-link" onclick="switchTab('machines')">Ke Tab Machines →</a>
+              <a href="#machines" class="card-action-link" onclick="switchTab('machines')">Semua VM →</a>
             </div>
-
+            <div id="overviewScopeNotice" class="hidden"></div>
             <div class="project-list" id="overviewMachinesList">
-              <!-- Rendered dynamically -->
+              <div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">Memuat data fleet...</div>
             </div>
           </div>
         </section>
       </div>
 
-      <!-- ================= TAB CONTENT 2: MACHINES VIEW ================= -->
+      <!-- ================= TAB 2: MACHINES ================= -->
       <div id="tabContent-machines" class="tab-content">
         <div class="sub-view-header">
           <div>
-            <h1 class="clean-heading">Fleet Instances</h1>
-            <p class="clean-subheading">Manage, reboot, execute commands, or delete your isolated microVMs.</p>
+            <h1 class="clean-heading">Machines</h1>
+            <p class="clean-subheading">Deploy, jalankan perintah, atau atur status microVM.</p>
           </div>
           <div class="filter-controls-row">
             <div class="filter-pill-box">
-              <span class="fp-label">STATUS</span>
-              <select id="statusFilter" class="fp-select" onchange="filterMachines()">
-                <option value="all">ALL STATUSES</option>
-                <option value="running">RUNNING ONLY</option>
-                <option value="suspended">SUSPENDED / STANDBY</option>
-                <option value="hibernated">HIBERNATED</option>
-                <option value="stopped">STOPPED</option>
+              <select id="statusFilter" class="fp-select" onchange="filterMachines()" aria-label="Filter status VM">
+                <option value="all">Semua Status</option>
+                <option value="running">Running</option>
+                <option value="hibernated">Hibernated</option>
+                <option value="suspended">Standby</option>
+                <option value="stopped">Stopped</option>
+                <option value="private">Private (Read-Only)</option>
               </select>
             </div>
-            <button class="btn-stark-cta" onclick="openNewMachineModal()">Deploy MicroVM</button>
+            <button class="btn-stark-cta" onclick="openNewMachineModal()">+ Deploy VM</button>
           </div>
         </div>
 
-        <div id="machinesGrid" class="machines-grid">
-          <!-- Rendered dynamically -->
-        </div>
+        <div id="machinesScopeNotice" class="hidden"></div>
+
+        <div id="machinesGrid" class="machines-grid"></div>
 
         <div id="emptyMachinesState" class="empty-state hidden">
           <div class="es-box">
-            <span class="es-code font-mono">[NO_INSTANCES_MATCHED]</span>
-            <p>Tidak ada microVM yang sesuai dengan filter pencarian Anda.</p>
-            <button class="btn-stark-cta" onclick="openNewMachineModal()">Deploy MicroVM Sekarang</button>
+            <p>Belum ada VM yang cocok dengan filter ini.</p>
+            <button class="btn-stark-cta" onclick="openNewMachineModal()">+ Deploy VM</button>
           </div>
         </div>
       </div>
 
-      <!-- ================= TAB CONTENT 3: PANDUAN & CHEATSHEET ================= -->
+      <!-- ================= TAB 3: PANDUAN ================= -->
       <div id="tabContent-panduan" class="tab-content">
         <div class="sub-view-header">
           <div>
-            <h1 class="clean-heading">Panduan Boxd Fleet</h1>
-            <p class="clean-subheading">Cheatsheet koneksi SSH, deploy instans, trik hemat saldo, dan routing web.</p>
+            <h1 class="clean-heading">Panduan</h1>
+            <p class="clean-subheading">Koneksi SSH, deploy VM, hemat saldo, dan routing web.</p>
           </div>
-          <a href="https://docs.boxd.sh" target="_blank" rel="noopener" class="btn-secondary-sm">
+          <a href="https://docs.boxd.sh" target="_blank" rel="noopener" class="btn-secondary-sm" style="text-decoration: none;">
             <span>Docs Resmi ↗</span>
           </a>
         </div>
 
         <div class="guide-grid">
-          <!-- Guide 1: Koneksi SSH & Terminal -->
           <div class="content-card">
             <div class="card-header">
-              <h2 class="card-title">1. Akses & Konek (SSH / Console)</h2>
+              <h2 class="card-title">1. Akses SSH & Console</h2>
             </div>
             <div class="guide-body">
-              <p class="guide-p">Tiap microVM punya port SSH publik khusus dan web console instan:</p>
-              
               <div class="guide-code-box">
-                <span class="guide-code-title">Terminal SSH (Langsung dari HP / Laptop)</span>
-                <pre class="font-mono guide-code">ssh -p &lt;PORT&gt; root@nyc.boxd.sh</pre>
-                <small class="text-dim">Contoh instans demo-vm: port 22001</small>
+                <div class="guide-code-head">
+                  <span class="guide-code-title">Terminal SSH</span>
+                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('ssh -p <PORT> root@<region>.boxd.sh', 'Perintah SSH disalin')">Copy</button>
+                </div>
+                <pre class="font-mono guide-code">ssh -p &lt;PORT&gt; root@&lt;region&gt;.boxd.sh</pre>
+                <small class="text-dim">Region tersedia: <code>fra.boxd.sh</code> atau <code>nyc.boxd.sh</code></small>
+              </div>
+
+              <div class="guide-code-box">
+                <div class="guide-code-head">
+                  <span class="guide-code-title">Transfer File (SCP)</span>
+                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('scp -P <PORT> script.py root@<region>.boxd.sh:/root/', 'Perintah SCP disalin')">Copy</button>
+                </div>
+                <pre class="font-mono guide-code">scp -P &lt;PORT&gt; script.py root@&lt;region&gt;.boxd.sh:/root/</pre>
               </div>
 
               <div class="guide-tip-box">
-                <strong>Tips Web Console:</strong> Klik tombol <code>&gt;_ Console</code> di kartu instans buat buka terminal langsung di browser tanpa perlu install client SSH.
-              </div>
-
-              <div class="guide-code-box">
-                <span class="guide-code-title">Upload / Download File (SCP)</span>
-                <pre class="font-mono guide-code">scp -P &lt;PORT&gt; script.py root@nyc.boxd.sh:/root/</pre>
+                Klik tombol <code>&gt;_ Console</code> di kartu VM untuk menjalankan command langsung dari browser.
               </div>
             </div>
           </div>
 
-          <!-- Guide 2: Cara Deploy MicroVM -->
           <div class="content-card">
             <div class="card-header">
-              <h2 class="card-title">2. Cara Deploy MicroVM</h2>
+              <h2 class="card-title">2. Deploy MicroVM</h2>
             </div>
             <div class="guide-body">
-              <p class="guide-p">Bikin instans baru bisa lewat 2 cara gampang:</p>
-              
-              <div class="guide-step-item">
-                <span class="step-num">A</span>
-                <div>
-                  <strong>Lewat Dashboard Web:</strong>
-                  <p class="guide-p">Buka tab <strong>Machines</strong> → klik tombol <strong>Deploy MicroVM</strong> di pojok kanan atas → tentukan vCPU, RAM, dan disk.</p>
-                </div>
+              <div class="guide-code-box">
+                <span class="guide-code-title">Lewat Dashboard</span>
+                <p class="guide-p">Buka tab <strong>Machines</strong> lalu klik <strong>+ Deploy VM</strong> untuk pilih akun, region, dan ukuran vCPU/RAM.</p>
               </div>
 
-              <div class="guide-step-item">
-                <span class="step-num">B</span>
-                <div>
-                  <strong>Lewat Terminal CLI:</strong>
-                  <pre class="font-mono guide-code">boxd machines create --name my-vm --vcpu 2 --ram 4096 --disk 50</pre>
+              <div class="guide-code-box">
+                <div class="guide-code-head">
+                  <span class="guide-code-title">Lewat CLI</span>
+                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('boxd machine new my-vm --vcpu 2 --memory 4G --region fra --shared', 'Perintah CLI disalin')">Copy</button>
                 </div>
+                <pre class="font-mono guide-code">boxd machine new my-vm --vcpu 2 --memory 4G --region fra --shared</pre>
               </div>
 
               <div class="guide-tip-box">
-                Instans jalan di atas <strong>Firecracker KVM</strong>, siap pakai dalam 2–5 detik.
+                Gunakan <code>--shared</code> (atau centang <strong>Share with Org</strong>) bila memakai ORG key agar VM bisa dikontrol di konsol.
               </div>
             </div>
           </div>
 
-          <!-- Guide 3: Trik Hemat Saldo -->
           <div class="content-card">
             <div class="card-header">
-              <h2 class="card-title">3. Trik Hemat Saldo (Micro-Metering)</h2>
+              <h2 class="card-title">3. Hemat Saldo</h2>
             </div>
             <div class="guide-body">
-              <p class="guide-p">Sistem billing Boxd dihitung per-detik (pay-as-you-go):</p>
-              
               <ul class="guide-bullet-list">
-                <li><strong>Status RUNNING:</strong> vCPU ($0.0470/hr) + RAM ($0.0140/GB-hr) + Storage.</li>
-                <li><strong>Status HIBERNATED / STOPPED:</strong> vCPU & RAM <strong>$0 (GRATIS)</strong>! Cuma bayar storage NVMe ($0.0001/GB-hr atau ~Rp 15/hari).</li>
-                <li><strong>Cara Irit:</strong> Kalau selesai testing, klik tombol <strong>⏸ Pause</strong> atau <strong>■ Stop</strong>. Saldo lu bakal awet berbulan-bulan.</li>
+                <li><strong>Running:</strong> Dihitung per detik untuk vCPU, RAM, dan storage.</li>
+                <li><strong>Hibernated / Stopped:</strong> Biaya vCPU &amp; RAM <strong>$0</strong>, hanya kena biaya storage NVMe.</li>
+                <li><strong>Tips:</strong> Aktifkan <strong>Auto-Suspend</strong> saat deploy atau klik <strong>Hibernate</strong> setelah selesai pakai.</li>
               </ul>
             </div>
           </div>
 
-          <!-- Guide 4: Subdomain & Web Routing -->
           <div class="content-card">
             <div class="card-header">
-              <h2 class="card-title">4. Web Domain & Routing HTTP</h2>
+              <h2 class="card-title">4. Routing Web</h2>
             </div>
             <div class="guide-body">
-              <p class="guide-p">Tiap VM otomatis dapet alamat publik gratis:</p>
               <div class="guide-code-box">
-                <span class="guide-code-title">URL Publik Otomatis</span>
-                <pre class="font-mono guide-code">https://&lt;nama-vm&gt;.nyc.boxd.sh</pre>
+                <div class="guide-code-head">
+                  <span class="guide-code-title">Endpoint HTTPS</span>
+                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('https://<nama-vm>.<region>.boxd.sh', 'URL disalin')">Copy</button>
+                </div>
+                <pre class="font-mono guide-code">https://&lt;nama-vm&gt;.&lt;region&gt;.boxd.sh</pre>
               </div>
-              <p class="guide-p">Tinggal jalankan web server di dalam VM (port 80 atau 3000), traffic otomatis di-forward tanpa perlu setting Nginx manual.</p>
+              <p class="guide-p">Jalankan server di port <code>80</code> atau <code>3000</code> dalam VM agar trafik langsung diteruskan ke URL tersebut.</p>
             </div>
           </div>
 
-          <!-- Guide 5: Boxd CLI Cheatsheet -->
           <div class="content-card guide-full-width">
             <div class="card-header">
-              <h2 class="card-title">5. Cheatsheet Command Boxd CLI</h2>
+              <h2 class="card-title">5. Perintah Boxd CLI</h2>
             </div>
             <div class="guide-body">
               <div class="cli-table-wrap">
-                <table class="telemetry-table font-mono" style="font-size: 11px;">
+                <table class="telemetry-table guide-cli-table" style="font-size: 11.5px;">
                   <thead>
                     <tr>
-                      <th style="width: 260px;">Command</th>
+                      <th style="width: 38%;">Command</th>
                       <th>Fungsi</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td><code>boxd machines list</code></td>
-                      <td>Cek status semua microVM aktif & hibernated</td>
+                      <td><code>boxd machine ls</code></td>
+                      <td>Daftar microVM di home region</td>
                     </tr>
                     <tr>
-                      <td><code>boxd machines start &lt;name&gt;</code></td>
-                      <td>Nyalakan kembali VM yang lagi standby / hibernated</td>
+                      <td><code>boxd machine start &lt;name&gt;</code></td>
+                      <td>Nyalakan VM yang standby atau hibernated</td>
                     </tr>
                     <tr>
-                      <td><code>boxd machines stop &lt;name&gt;</code></td>
-                      <td>Matikan VM buat stop charge vCPU/RAM (hemat saldo)</td>
+                      <td><code>boxd machine stop &lt;name&gt;</code></td>
+                      <td>Hentikan VM untuk menghentikan charge vCPU/RAM</td>
                     </tr>
                     <tr>
-                      <td><code>boxd machines ssh &lt;name&gt;</code></td>
-                      <td>Langsung SSH ke instans otomatis tanpa ketik port</td>
+                      <td><code>boxd machine ssh &lt;name&gt;</code></td>
+                      <td>Masuk SSH ke VM tanpa ketik port manual</td>
                     </tr>
                     <tr>
-                      <td><code>boxd machines exec &lt;name&gt; -- &lt;cmd&gt;</code></td>
-                      <td>Eksekusi satu perintah shell tanpa login SSH manual</td>
+                      <td><code>boxd machine exec &lt;name&gt; -- &lt;cmd&gt;</code></td>
+                      <td>Jalankan satu command di dalam VM</td>
                     </tr>
                     <tr>
-                      <td><code>boxd orgs usage</code></td>
-                      <td>Lihat rincian pemakaian saldo & telemetri akun</td>
+                      <td><code>boxd org usage</code></td>
+                      <td>Cek pemakaian compute &amp; saldo organisasi</td>
                     </tr>
                   </tbody>
                 </table>
@@ -395,99 +378,93 @@
         </div>
       </div>
 
-      <!-- ================= TAB CONTENT 4: ACCOUNTS HUB ================= -->
+      <!-- ================= TAB 4: ACCOUNTS ================= -->
       <div id="tabContent-accounts" class="tab-content">
         <div class="sub-view-header">
           <div>
-            <h1 class="clean-heading">Account Management</h1>
-            <p class="clean-subheading">Multi-account Boxd API credentials stored securely in local SQLite WAL.</p>
+            <h1 class="clean-heading">Accounts</h1>
+            <p class="clean-subheading">Kelola API key, saldo, dan kuota tiap akun Boxd.</p>
           </div>
-          <button class="btn-stark-cta" onclick="openAddAccountModal()">Register Account</button>
+          <button class="btn-stark-cta" onclick="openAddAccountModal()">+ Tambah Akun</button>
         </div>
 
         <div class="filter-bar-accounts">
-          <div class="search-box" style="width: 320px;">
+          <div class="search-box">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8"/>
               <line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
-            <input type="text" id="accountSearchInput" placeholder="Filter akun atau masked key..." oninput="filterAccountsHub()">
+            <input type="text" id="accountSearchInput" placeholder="Cari nama akun atau org..." oninput="filterAccountsHub()">
           </div>
-          <span class="font-mono text-dim" id="accountsCountPill">1 Akun Terdaftar</span>
+          <span class="font-mono text-dim" id="accountsCountPill" style="font-size: 11px; font-weight: 700;">0 akun</span>
         </div>
 
-        <div id="accountsHubGrid" class="accounts-grid">
-          <!-- Rendered dynamically -->
-        </div>
+        <div id="accountsHubGrid" class="accounts-grid"></div>
       </div>
 
-      <!-- ================= TAB CONTENT 4: TELEMETRY & AUDIT ================= -->
+      <!-- ================= TAB 5: TARIF & PEMAKAIAN ================= -->
       <div id="tabContent-telemetry" class="tab-content">
         <div class="sub-view-header">
           <div>
-            <h1 class="clean-heading">Compute Telemetry & Tariff Ledger</h1>
-            <p class="clean-subheading">Real-time resource audit per tick • Upstream SDK usage accounting</p>
+            <h1 class="clean-heading">Tarif & Pemakaian</h1>
+            <p class="clean-subheading">Tarif per jam dan rincian biaya tiap microVM.</p>
           </div>
-          <button class="btn-secondary-sm" onclick="fetchTelemetryData()">⟳ Refresh Ledger</button>
+          <button class="btn-secondary-sm" onclick="fetchTelemetryData()">↻ Refresh</button>
         </div>
 
-        <!-- 4 Rate Cards -->
         <div class="rates-overview-grid">
           <div class="stat-card">
             <div class="stat-content">
-              <span class="stat-label">vCPU COMPUTE RATE</span>
-              <div class="stat-value font-mono">$0.0470</div>
-              <span class="stat-comparison">USD per core / hour</span>
+              <span class="stat-label">TARIF vCPU</span>
+              <div class="stat-value font-mono" id="telemVcpuRate">$0.0470</div>
+              <span class="stat-comparison">per core / jam</span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-content">
-              <span class="stat-label">RAM ALLOCATION RATE</span>
-              <div class="stat-value font-mono">$0.0140</div>
-              <span class="stat-comparison">USD per GiB / hour</span>
+              <span class="stat-label">TARIF RAM</span>
+              <div class="stat-value font-mono" id="telemRamRate">$0.0140</div>
+              <span class="stat-comparison">per GiB / jam</span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-content">
-              <span class="stat-label">STORAGE RATE</span>
-              <div class="stat-value font-mono">$0.000096</div>
-              <span class="stat-comparison">USD per GiB / hour</span>
+              <span class="stat-label">TARIF STORAGE</span>
+              <div class="stat-value font-mono" id="telemStorageRate">$0.000096</div>
+              <span class="stat-comparison">per GiB / jam</span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-content">
-              <span class="stat-label">INSTANCE QUOTA CAP</span>
-              <div class="stat-value font-mono" id="telemMaxQuota">100 VM</div>
-              <span class="stat-comparison">Max capacity per organization</span>
+              <span class="stat-label">TOTAL BIAYA</span>
+              <div class="stat-value font-mono text-emerald" id="telemTotalCost">$0.00</div>
+              <span class="stat-comparison" id="telemQuotaHint">akumulasi pemakaian</span>
             </div>
           </div>
         </div>
 
-        <!-- Telemetry Table -->
         <div class="content-card" style="margin-top: 14px; padding: 0; overflow: hidden;">
-          <div class="card-header" style="padding: 14px 18px 12px 18px; border-bottom: 1px solid var(--border-card); margin-bottom: 0;">
-            <h2 class="card-title">Live Compute Ledger</h2>
-            <span class="trend-badge badge-green font-mono">Real-time SDK Metrics</span>
+          <div class="card-header" style="padding: 14px 18px 12px 18px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 0;">
+            <h2 class="card-title">Pemakaian VM</h2>
+            <span class="stat-subpill badge-green-soft font-mono" id="telemLastSyncedBadge">Synced</span>
           </div>
           <div style="overflow-x: auto;">
             <table class="telemetry-table">
               <thead>
                 <tr>
-                  <th>MACHINE IDENTIFIER</th>
-                  <th>REGION / STATUS</th>
-                  <th>ALLOCATED SPECS</th>
-                  <th>UPTIME DURATION</th>
-                  <th>vCPU·HR</th>
-                  <th>RAM GIB·HR</th>
-                  <th>TOTAL COST</th>
+                  <th>VM</th>
+                  <th>STATUS / REGION</th>
+                  <th>SPEK</th>
+                  <th>UPTIME</th>
+                  <th class="num">vCPU·HR</th>
+                  <th class="num">RAM GIB·HR</th>
+                  <th class="num">BIAYA</th>
                 </tr>
               </thead>
-              <tbody id="telemetryTableBody">
-                <!-- Rendered dynamically -->
-              </tbody>
+              <tbody id="telemetryTableBody"></tbody>
             </table>
           </div>
         </div>
@@ -500,27 +477,27 @@
   <div id="addAccountModal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3 class="modal-title">Register Boxd API Account</h3>
+        <h3 class="modal-title">Tambah Akun Boxd</h3>
         <button class="modal-close" onclick="closeAddAccountModal()" aria-label="Close dialog">&times;</button>
       </div>
       <div class="modal-body">
         <form id="addAccountForm" onsubmit="handleAddAccount(event)">
           <div class="field-wrap">
-            <label class="field-label">ACCOUNT ALIAS / LABEL</label>
-            <input type="text" id="accLabelInput" placeholder="e.g. Primary Infrastructure" required>
+            <label class="field-label">NAMA AKUN</label>
+            <input type="text" id="accLabelInput" placeholder="cth: Akun Utama" required>
           </div>
           <div class="field-wrap">
-            <label class="field-label">BOXD API KEY (bxd_...)</label>
+            <label class="field-label">API KEY</label>
             <input type="password" id="accKeyInput" placeholder="bxd_xxxxxxxxxxxxxxxxxxxx" required>
           </div>
           <div class="field-wrap">
-            <label class="field-label">NOTES / TAGS (OPTIONAL)</label>
-            <input type="text" id="accNotesInput" placeholder="Catatan internal kluster...">
+            <label class="field-label">CATATAN (OPSIONAL)</label>
+            <input type="text" id="accNotesInput" placeholder="Catatan singkat...">
           </div>
           <div class="modal-actions-row">
             <button type="button" class="btn-secondary-sm" onclick="closeAddAccountModal()">Batal</button>
             <button type="submit" id="addAccountBtn" class="btn-stark-cta">
-              <span>Validasi & Simpan</span>
+              <span>Simpan Akun</span>
             </button>
           </div>
         </form>
@@ -532,51 +509,52 @@
   <div id="newMachineModal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3 class="modal-title">Deploy MicroVM Instance</h3>
+        <h3 class="modal-title">Deploy MicroVM</h3>
         <button class="modal-close" onclick="closeNewMachineModal()" aria-label="Close dialog">&times;</button>
       </div>
       <div class="modal-body">
         <form id="newMachineForm" onsubmit="handleCreateMachine(event)">
           <div class="field-wrap">
-            <label class="field-label">TARGET ACCOUNT</label>
-            <select id="vmAccountSelect" required></select>
+            <label class="field-label">AKUN</label>
+            <select id="vmAccountSelect" onchange="onDeployAccountChange()" required></select>
+            <div id="vmAccountScopeHint" class="font-mono text-muted" style="font-size: 10px; margin-top: 3px;"></div>
           </div>
           <div class="field-wrap">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <label class="field-label">INSTANCE NAME</label>
-              <button type="button" class="btn-link-sm" onclick="generateRandomName()">[Generate Acak]</button>
+              <label class="field-label">NAMA VM</label>
+              <button type="button" class="btn-link-sm" onclick="generateRandomName()">Acak</button>
             </div>
-            <input type="text" id="vmNameInput" placeholder="Contoh: worker-node-01 (kosongkan untuk acak)">
+            <input type="text" id="vmNameInput" placeholder="worker-node-01 (opsional)">
           </div>
           <div class="field-wrap">
-            <label class="field-label">HARDWARE PROFILE (vCPU & RAM)</label>
+            <label class="field-label">SPESIFIKASI</label>
             <div class="size-options-grid">
               <label class="size-option">
                 <input type="radio" name="vmSize" value="1x4" checked>
                 <div class="size-box">
                   <span class="sb-cpu">1 vCPU</span>
-                  <span class="sb-ram">4 GB RAM</span>
+                  <span class="sb-ram">4 GB</span>
                 </div>
               </label>
               <label class="size-option">
                 <input type="radio" name="vmSize" value="2x8">
                 <div class="size-box">
                   <span class="sb-cpu">2 vCPU</span>
-                  <span class="sb-ram">8 GB RAM</span>
+                  <span class="sb-ram">8 GB</span>
                 </div>
               </label>
               <label class="size-option">
                 <input type="radio" name="vmSize" value="4x16">
                 <div class="size-box">
                   <span class="sb-cpu">4 vCPU</span>
-                  <span class="sb-ram">16 GB RAM</span>
+                  <span class="sb-ram">16 GB</span>
                 </div>
               </label>
               <label class="size-option">
                 <input type="radio" name="vmSize" value="8x32">
                 <div class="size-box">
                   <span class="sb-cpu">8 vCPU</span>
-                  <span class="sb-ram">32 GB RAM</span>
+                  <span class="sb-ram">32 GB</span>
                 </div>
               </label>
             </div>
@@ -585,20 +563,29 @@
             <div class="field-wrap" style="flex: 1;">
               <label class="field-label">REGION</label>
               <select id="vmRegionSelect">
-                <option value="default">Default Region</option>
-                <option value="nyc">New York (NYC)</option>
+                <option value="default">Default (Home)</option>
                 <option value="fra">Frankfurt (FRA)</option>
+                <option value="nyc">New York (NYC)</option>
               </select>
             </div>
             <div class="field-wrap" style="flex: 1;">
               <label class="field-label">AUTO-SUSPEND (DETIK)</label>
-              <input type="number" id="vmSuspendInput" value="300" placeholder="300 (0 = matikan)">
+              <input type="number" id="vmSuspendInput" value="300" placeholder="300 (0 = nonaktif)">
             </div>
+          </div>
+          <div class="field-wrap" style="margin-bottom: 4px;">
+            <label class="checkbox-pill-row">
+              <input type="checkbox" id="vmSharedInput" checked>
+              <div>
+                <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">Share with Org</div>
+                <div class="font-mono text-muted" style="font-size: 9.5px;">Wajib aktif untuk ORG key agar VM bisa dikontrol.</div>
+              </div>
+            </label>
           </div>
           <div class="modal-actions-row">
             <button type="button" class="btn-secondary-sm" onclick="closeNewMachineModal()">Batal</button>
             <button type="submit" id="createMachineBtn" class="btn-stark-cta">
-              <span>Deploy Sekarang</span>
+              <span>Deploy VM</span>
             </button>
           </div>
         </form>
@@ -611,8 +598,8 @@
     <div class="modal-dialog modal-wide">
       <div class="modal-header">
         <div>
-          <h3 class="modal-title">In-VM Terminal Console</h3>
-          <p class="modal-sub">Target: <strong id="execTargetName">-</strong> • Akun: <span id="execTargetAccount">-</span></p>
+          <h3 class="modal-title">Terminal Console</h3>
+          <p class="modal-sub"><strong id="execTargetName">-</strong> · <span id="execTargetAccount">-</span></p>
         </div>
         <button class="modal-close" onclick="closeExecModal()" aria-label="Close dialog">&times;</button>
       </div>
@@ -625,20 +612,20 @@
           <button class="cmd-pill" onclick="setExecCmd('curl -s ifconfig.me')">my ip</button>
         </div>
         <form id="execForm" onsubmit="handleRunExec(event)" class="cmd-input-bar">
-          <span class="cmd-prompt font-mono">boxd $</span>
-          <input type="text" id="execCmdInput" placeholder="Ketik perintah shell bash..." autofocus required>
+          <span class="cmd-prompt font-mono">$</span>
+          <input type="text" id="execCmdInput" placeholder="Ketik perintah..." autofocus required>
           <button type="submit" id="execSubmitBtn" class="btn-stark-cta" style="padding: 6px 14px; font-size: 11px;">
             <span>Jalankan</span>
           </button>
         </form>
         <div class="terminal-view font-mono" id="execOutputScreen">
-          <div style="color: var(--text-muted);"># In-VM shell siap. Output eksekusi akan tampil di sini.</div>
+          <div style="color: var(--text-muted);"># Siap.</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- SECURITY GATE OVERLAY (Displayed only if unauthenticated) -->
+  <!-- SECURITY GATE OVERLAY -->
   <div id="securityGate" class="security-gate-overlay hidden">
     <div class="security-gate-card">
       <div class="sg-brand">
@@ -649,171 +636,113 @@
         </div>
       </div>
       <div class="sg-header">
-        <h2 class="sg-title">SISTEM KEAMANAN TERPUSAT</h2>
-        <p class="sg-desc">Akses dibatasi. Masukkan PIN Akses konsol untuk membuka fleet MicroVM.</p>
+        <h2 class="sg-title">MASUK KONSOL</h2>
+        <p class="sg-desc">Masukkan PIN akses untuk melanjutkan.</p>
       </div>
       <form id="pinForm" onsubmit="handleLogin(event)" class="sg-form">
         <div class="form-group" style="margin-bottom: 12px;">
           <label for="pinInput" class="form-label" style="display: flex; justify-content: space-between;">
-            <span>PIN / MASTER KEY</span>
-            <span class="font-mono text-muted" style="font-size: 10px;">PROTEKSI AKTIF</span>
+            <span>PIN AKSES</span>
           </label>
-          <input type="password" id="pinInput" class="form-input font-mono" placeholder="Masukkan PIN Akses..." required autofocus autocomplete="current-password">
+          <input type="password" id="pinInput" class="form-input font-mono" placeholder="Masukkan PIN..." required autofocus autocomplete="current-password">
         </div>
         <div id="pinError" class="sg-error hidden"></div>
         <button type="submit" id="pinSubmitBtn" class="btn-stark-cta" style="width: 100%; height: 40px; font-size: 12px; justify-content: center;">
-          <span>BUKA KONSOL →</span>
+          <span>Buka Konsol →</span>
         </button>
       </form>
       <div class="sg-footer font-mono">
-        <span>🛡️ Brute-Force Guard (Max 5x)</span>
+        <span>Lockout 5x gagal</span>
         <span>•</span>
-        <span>TLS 1.3 Encrypted</span>
+        <span>Sesi terenkripsi</span>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: PUSAT KEAMANAN & AUDIT TRAIL -->
+  <!-- MODAL: KEAMANAN & FIREWALL -->
   <div id="securityCenterModal" class="modal-overlay hidden">
     <div class="modal-dialog modal-wide">
       <div class="modal-header">
-        <div>
-          <h3 class="modal-title">🛡️ Pusat Keamanan & Audit Trail</h3>
-          <p class="modal-sub">Status proteksi real-time cluster Boxd Fleet</p>
-        </div>
+        <h3 class="modal-title">Keamanan & Firewall</h3>
         <button class="modal-close" onclick="closeSecurityCenterModal()" aria-label="Close dialog">&times;</button>
       </div>
-      <div class="modal-body" style="display: flex; flex-direction: column; gap: 14px;">
-        
-        <!-- 4 Security Pillars -->
-        <div class="sec-pillars-grid">
-          <div class="sec-pill-card">
-            <div class="sec-pill-icon">🌐</div>
-            <div>
-              <div class="sec-pill-title">Edge Encryption</div>
-              <div class="sec-pill-val font-mono text-emerald">TLS 1.3 / QUIC</div>
-              <div class="sec-pill-desc">Cloudflare Argo tunnel aktif, end-to-end terenkripsi.</div>
-            </div>
-          </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
 
-          <div class="sec-pill-card">
-            <div class="sec-pill-icon">🔒</div>
-            <div>
-              <div class="sec-pill-title">Session Guard</div>
-              <div class="sec-pill-val font-mono text-emerald">HMAC-SHA256</div>
-              <div class="sec-pill-desc">HttpOnly 30-hari persistent cookie & sign verification.</div>
-            </div>
+        <!-- Compact Security Status + Session -->
+        <div class="sec-session-bar">
+          <div style="min-width: 0;">
+            <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">Sesi Aktif · admin</div>
+            <div class="font-mono text-muted" style="font-size: 10px;">Sesi 30 hari • Rate limit &amp; lockout 5x aktif</div>
           </div>
-
-          <div class="sec-pill-card">
-            <div class="sec-pill-icon">⚡</div>
-            <div>
-              <div class="sec-pill-title">Rate Limiter</div>
-              <div class="sec-pill-val font-mono text-emerald">Anti-DDoS Aktif</div>
-              <div class="sec-pill-desc">Limitasi otomatis pada eksekusi perintah & aksi mesin.</div>
-            </div>
-          </div>
-
-          <div class="sec-pill-card">
-            <div class="sec-pill-icon">🛑</div>
-            <div>
-              <div class="sec-pill-title">Brute-Force Shield</div>
-              <div class="sec-pill-val font-mono text-emerald">5-Tries Lockout</div>
-              <div class="sec-pill-desc">Blokir IP 15 menit jika terdeteksi 5 kali gagal PIN.</div>
-            </div>
-          </div>
+          <button class="action-btn danger" onclick="handleLogout()" style="height: 28px; padding: 0 10px; font-size: 10.5px; display: inline-flex; align-items: center;">
+            Kunci Konsol
+          </button>
         </div>
 
-        <!-- Active Session Controls -->
-        <div class="content-card" style="padding: 12px 14px; background-color: var(--bg-card-subtle);">
-          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-            <div>
-              <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">SESI PENGGUNA SAAT INI</div>
-              <div class="font-mono text-muted" style="font-size: 10px;">User: <strong>admin</strong> • Perangkat Terotorisasi</div>
-            </div>
-            <button class="action-btn danger" onclick="handleLogout()" style="padding: 6px 12px; font-size: 11px;">
-              🔒 Kunci Konsol (Logout)
-            </button>
-          </div>
-        </div>
-
-        <!-- FIREWALL: ALLOWED IP ACCESS (IP WHITELIST) -->
-        <div class="content-card" style="padding: 12px 14px; background-color: var(--bg-card-subtle);">
+        <!-- Firewall IP -->
+        <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
           <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
-            <div>
-              <div style="font-size: 11px; font-weight: 800; color: var(--text-primary); text-transform: uppercase; letter-spacing: 0.04em;">
-                FIREWALL: ALLOWED IP ACCESS
-              </div>
-              <div class="font-mono text-muted" style="font-size: 10px;">
-                Batasi akses web hanya untuk IP perangkat tertentu.
-              </div>
-            </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span id="ipWhitelistStatusBadge" class="trend-badge badge-neutral font-mono">NONAKTIF</span>
-              <button id="ipWhitelistToggleBtn" class="action-btn" onclick="toggleIpWhitelist()" style="font-size: 10px; padding: 4px 10px;">
-                Aktifkan Filter IP
-              </button>
+              <span style="font-size: 11px; font-weight: 800; color: var(--text-primary); text-transform: uppercase;">Filter IP</span>
+              <span id="ipWhitelistStatusBadge" class="stat-subpill font-mono">NONAKTIF</span>
             </div>
-          </div>
-
-          <!-- Detected IP Bar -->
-          <div style="display: flex; align-items: center; justify-content: space-between; background-color: var(--bg-card); padding: 8px 10px; border: 1.5px solid var(--border-color); border-radius: var(--radius-sm); margin-bottom: 10px; gap: 8px; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="font-size: 11px; font-weight: 700; color: var(--text-secondary);">IP Anda Saat Ini:</span>
-              <strong id="currentDetectedIp" class="font-mono" style="color: var(--text-primary); font-size: 12px;">-</strong>
-            </div>
-            <button class="btn-stark-cta" onclick="allowMyCurrentIp()" style="font-size: 10.5px; padding: 4px 10px; height: 30px;">
-              + Izinkan IP Saya
+            <button id="ipWhitelistToggleBtn" class="action-btn" onclick="toggleIpWhitelist()" style="height: 28px; padding: 0 10px; font-size: 10.5px; display: inline-flex; align-items: center;">
+              Aktifkan
             </button>
           </div>
 
-          <!-- Add Manual IP Form -->
-          <form onsubmit="handleAddAllowedIp(event)" style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; margin-bottom: 10px;">
-            <input type="text" id="newAllowedIpInput" class="form-input font-mono" placeholder="Alamat IP (cth: 203.0.113.10)" style="height: 32px; font-size: 11px;" required>
-            <input type="text" id="newAllowedIpLabel" class="form-input" placeholder="Label (cth: HP Pribadi)" style="height: 32px; font-size: 11px;">
-            <button type="submit" class="action-btn primary" style="height: 32px; padding: 0 12px; font-size: 11px;">
+          <div class="sec-current-ip-bar">
+            <div style="display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;">
+              <span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); white-space: nowrap;">IP Kamu:</span>
+              <strong id="currentDetectedIp" class="font-mono" style="color: var(--text-primary); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-</strong>
+            </div>
+            <button class="btn-stark-cta btn-sm-cta" onclick="allowMyCurrentIp()">
+              + Izinkan IP Ini
+            </button>
+          </div>
+
+          <form onsubmit="handleAddAllowedIp(event)" class="sec-ip-form">
+            <input type="text" id="newAllowedIpInput" class="form-input font-mono" placeholder="IPv4 / IPv6 / CIDR" required>
+            <input type="text" id="newAllowedIpLabel" class="form-input" placeholder="Label (cth: HP)">
+            <button type="submit" class="action-btn primary" style="height: 36px; padding: 0 14px; font-size: 11px;">
               + Tambah
             </button>
           </form>
 
-          <!-- Allowed IPs List Table -->
-          <div class="audit-log-table-wrap" style="max-height: 140px;">
+          <div class="audit-log-table-wrap" style="max-height: 120px;">
             <table class="audit-table font-mono" id="allowedIpsTable">
               <thead>
                 <tr>
-                  <th>ALAMAT IP</th>
-                  <th>LABEL</th>
-                  <th style="text-align: right;">AKSI</th>
+                  <th style="width: 44%;">Alamat IP</th>
+                  <th style="width: 34%;">Label</th>
+                  <th style="width: 22%; text-align: right;">Aksi</th>
                 </tr>
               </thead>
               <tbody id="allowedIpsTableBody">
-                <tr><td colspan="3" style="text-align: center; padding: 10px;">Memuat daftar IP...</td></tr>
+                <tr><td colspan="3" style="text-align: center; padding: 10px;">Memuat...</td></tr>
               </tbody>
             </table>
           </div>
-          <div class="font-mono text-muted" style="font-size: 9.5px; margin-top: 6px;">
-            🛡️ Tips: Tautan Master Key <code>(?key=...)</code> otomatis mendaftarkan IP baru jika jaringan provider berganti.
-          </div>
         </div>
 
-        <!-- Audit Trail Live Feed -->
+        <!-- Audit Log -->
         <div>
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <span style="font-size: 12px; font-weight: 800; color: var(--text-primary);">LIVE AUDIT TRAIL (Riwayat Aktivitas Terakhir)</span>
-            <button class="btn-action-ghost font-mono" onclick="fetchAuditLogs()" style="font-size: 10px; padding: 2px 8px;">↻ REFRESH LOGS</button>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-size: 11px; font-weight: 800; color: var(--text-primary); text-transform: uppercase;">Riwayat Aktivitas</span>
+            <button class="btn-secondary-sm font-mono" onclick="fetchAuditLogs()" style="height: 28px; padding: 0 10px; font-size: 10.5px; display: inline-flex; align-items: center;">↻ Refresh</button>
           </div>
-          <div class="audit-log-table-wrap">
-            <table class="audit-table font-mono" id="auditTable">
+          <div class="audit-log-table-wrap" style="max-height: 170px;">
+            <table class="audit-table audit-table-fixed font-mono" id="auditTable">
               <thead>
                 <tr>
-                  <th>WAKTU</th>
-                  <th>EVENT</th>
-                  <th>IP CLIENT</th>
-                  <th>STATUS</th>
+                  <th style="width: 21%;">Waktu</th>
+                  <th style="width: 24%;">Event</th>
+                  <th style="width: 39%;">IP</th>
+                  <th style="width: 16%; text-align: right;">Status</th>
                 </tr>
               </thead>
               <tbody id="auditTableBody">
-                <tr><td colspan="4" style="text-align: center; padding: 16px;">Memuat audit log...</td></tr>
+                <tr><td colspan="4" style="text-align: center; padding: 14px;">Memuat...</td></tr>
               </tbody>
             </table>
           </div>
@@ -823,37 +752,33 @@
     </div>
   </div>
 
-  <!-- MODAL: KONFIRMASI KEAMANAN HAPUS MICROVM -->
+  <!-- MODAL: KONFIRMASI HAPUS VM -->
   <div id="deleteMachineSafetyModal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header" style="border-bottom-color: #F43F5E;">
-        <div>
-          <h3 class="modal-title" style="color: #F43F5E;">⚠️ Konfirmasi Keamanan Hapus MicroVM</h3>
-          <p class="modal-sub">Tindakan destruktif permanen pada cloud cluster</p>
-        </div>
+        <h3 class="modal-title" style="color: #F43F5E;">Hapus MicroVM</h3>
         <button class="modal-close" onclick="closeDeleteSafetyModal()" aria-label="Close dialog">&times;</button>
       </div>
       <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
-        <div class="guide-tip-box" style="border-color: #F43F5E; background-color: rgba(244, 63, 94, 0.1); color: #FDA4AF;">
-          Mesin <strong id="safetyDelVmName" class="font-mono" style="color: #FFF;">-</strong> beserta disk penyimpanan akan dihapus permanen dan tidak dapat dipulihkan.
+        <div class="guide-tip-box" style="border-color: #F43F5E; background-color: rgba(244, 63, 94, 0.12); color: var(--text-primary);">
+          VM <strong id="safetyDelVmName" class="font-mono" style="color: #F43F5E; font-weight: 800;">-</strong> dan datanya akan dihapus permanen.
         </div>
         <div class="form-group">
           <label class="form-label" for="safetyDelInput">
-            Ketik nama mesin <code id="safetyDelPromptName" class="font-mono" style="background-color: var(--bg-card); padding: 1px 6px; border: 1px solid var(--border-color); border-radius: 3px;">-</code> untuk membuka kunci:
+            Ketik <code id="safetyDelPromptName" class="font-mono" style="background-color: var(--bg-card); padding: 1px 6px; border: 1px solid var(--border-color); border-radius: 3px;">-</code> untuk konfirmasi:
           </label>
-          <input type="text" id="safetyDelInput" class="form-input font-mono" placeholder="Ketik nama mesin di sini..." oninput="checkSafetyDeleteMatch()" autocomplete="off">
+          <input type="text" id="safetyDelInput" class="form-input font-mono" placeholder="Nama VM..." oninput="checkSafetyDeleteMatch()" autocomplete="off">
         </div>
-        <div class="modal-actions-row" style="margin-top: 8px;">
+        <div class="modal-actions-row" style="margin-top: 4px;">
           <button type="button" class="btn-secondary-sm" onclick="closeDeleteSafetyModal()">Batal</button>
           <button type="button" id="safetyDelConfirmBtn" class="action-btn danger" style="padding: 8px 16px; opacity: 0.5; pointer-events: none;" onclick="executeSafetyDelete()">
-            ✕ Hapus Permanen
+            Hapus Permanen
           </button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- TOAST CONTAINER -->
   <div id="toastContainer" class="toast-container"></div>
 
   <script src="/app.js"></script>

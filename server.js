@@ -29,7 +29,7 @@ app.use(cookieParser());
 
 // Request logger for audit & troubleshooting
 app.use((req, res, next) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   res.on('finish', () => {
     if (req.path.startsWith('/api') && !req.path.includes('/auth/status')) {
       console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} - ${ip}`);
@@ -117,6 +117,14 @@ app.use((req, res, next) => {
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Prevent stale HTTP/edge caching on ALL live auth, telemetry & fleet API responses
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 // ================= AUTH ROUTES =================
 
 app.get('/api/auth/status', (req, res) => {
@@ -144,7 +152,7 @@ app.get('/api/auth/status', (req, res) => {
 });
 
 app.post('/api/auth/login', (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const rateCheck = auth.checkRateLimit(ip);
   if (!rateCheck.allowed) {
     dbHelper.logAudit('LOGIN_LOCKED', null, { ip, reason: 'rate_limit_exceeded' }, ip);
@@ -167,11 +175,11 @@ app.post('/api/auth/login', (req, res) => {
   auth.recordLoginAttempt(ip, true);
   const token = auth.signSession('admin');
 
-  // Set secure cookie
+  // Set secure cookie (30 days, aligned with ?key= & auth.js)
   res.cookie('boxd_session', token, {
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   });
 
   dbHelper.logAudit('LOGIN_SUCCESS', null, { user: 'admin' }, ip);
@@ -200,40 +208,84 @@ app.get('/api/accounts', (req, res) => {
 app.get('/api/accounts/telemetry', async (req, res) => {
   try {
     const accounts = dbHelper.getAccounts();
-    const activeAccounts = accounts.filter(a => a.status === 'active');
-    const fullAccounts = activeAccounts.map(a => dbHelper.getAccountById(a.id));
+    const fullAccounts = accounts.map(a => dbHelper.getAccountById(a.id)).filter(Boolean);
 
     const telemetryTasks = fullAccounts.map(acc =>
       boxdService.getAccountTelemetry(acc).catch(err => ({
-        account: { id: acc.id, label: acc.label, error: err.message },
+        success: false,
+        account: {
+          id: acc.id,
+          label: acc.label,
+          userId: acc.user_id,
+          displayName: acc.display_name || acc.label,
+          maxVms: acc.max_vms || 100,
+          status: 'error',
+          keyScope: acc.key_scope || 'unknown',
+          homeRegion: acc.home_region || 'fra',
+          error: err.message
+        },
+        org: { id: acc.org_id, name: acc.org_name || 'Personal', slug: acc.org_slug || '' },
+        billing: { balanceMicro: acc.balance_micro || 0, balance: (acc.balance_micro || 0) / 1e6, currency: (acc.currency || 'USD').toUpperCase(), entries: [] },
+        usage: null,
         error: err.message,
         machinesCount: 0,
+        controllableCount: 0,
+        privateLockedCount: 0,
         machines: []
       }))
     );
 
     const results = await Promise.all(telemetryTasks);
 
+    let activeAccounts = 0;
     let totalBalance = 0;
     let totalMachines = 0;
+    let controllableMachines = 0;
+    let privateLockedMachines = 0;
     let totalCost = 0;
     let totalMaxVms = 0;
+    let totalAllocatedVcpu = 0;
+    let totalAllocatedRamBytes = 0;
+    let rates = null;
+    let currency = 'USD';
 
     for (const t of results) {
-      if (t.billing && typeof t.billing.balance === 'number') totalBalance += t.billing.balance;
+      if (!t.error) activeAccounts++;
+      if (t.billing && typeof t.billing.balance === 'number') {
+        totalBalance += t.billing.balance;
+        if (t.billing.currency) currency = t.billing.currency;
+      }
       if (typeof t.machinesCount === 'number') totalMachines += t.machinesCount;
+      if (typeof t.controllableCount === 'number') controllableMachines += t.controllableCount;
+      if (typeof t.privateLockedCount === 'number') privateLockedMachines += t.privateLockedCount;
       if (t.usage && typeof t.usage.totalCost === 'number') totalCost += t.usage.totalCost;
-      if (t.account && typeof t.account.maxVms === 'number') totalMaxVms += t.account.maxVms;
+      if (t.usage && t.usage.rates && !rates) rates = t.usage.rates;
+      if (!t.error && t.account && typeof t.account.maxVms === 'number') totalMaxVms += t.account.maxVms;
+      if (Array.isArray(t.machines)) {
+        for (const m of t.machines) {
+          totalAllocatedVcpu += (m.resources && m.resources.vcpu) ? m.resources.vcpu : 0;
+          totalAllocatedRamBytes += (m.resources && m.resources.memoryBytes) ? m.resources.memoryBytes : 0;
+        }
+      }
     }
 
     res.json({
       success: true,
+      syncedAt: Date.now(),
       summary: {
-        totalAccounts: activeAccounts.length,
+        totalAccounts: results.length,
+        activeAccounts,
         totalBalance: parseFloat(totalBalance.toFixed(4)),
+        currency,
         totalMachines,
+        controllableMachines,
+        privateLockedMachines,
         totalMaxVms,
-        totalCost: parseFloat(totalCost.toFixed(6))
+        totalAllocatedVcpu,
+        totalAllocatedRamBytes,
+        totalAllocatedRamGb: parseFloat((totalAllocatedRamBytes / (1024 * 1024 * 1024)).toFixed(2)),
+        totalCost: parseFloat(totalCost.toFixed(6)),
+        rates: rates || { vcpuHour: 0.047, ramHour: 0.014, diskHour: 0.000096 }
       },
       accounts: results
     });
@@ -256,7 +308,7 @@ app.get('/api/accounts/:id/telemetry', async (req, res) => {
 });
 
 app.post('/api/accounts', async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const { label, apiKey, notes } = req.body;
 
   if (!label || !label.trim()) {
@@ -267,34 +319,40 @@ app.post('/api/accounts', async (req, res) => {
   }
 
   const trimmedKey = apiKey.trim();
-  const accId = 'acc_' + crypto.randomBytes(6).toString('hex');
 
-  // Create temporary account record
-  const initial = dbHelper.createAccount({
+  // Check duplicate API key first
+  const existing = dbHelper.getAccountByApiKey(trimmedKey);
+  if (existing) {
+    return res.status(409).json({
+      error: `API Key sudah terdaftar pada akun "${existing.label}" (${existing.id})`
+    });
+  }
+
+  // Validate against Boxd BEFORE inserting into SQLite so failed keys never pollute DB
+  const validation = await boxdService.validateNewApiKey(trimmedKey);
+  if (!validation.success) {
+    dbHelper.logAudit('ADD_ACCOUNT_FAILED', null, { label: label.trim(), error: validation.error }, ip);
+    return res.status(400).json({
+      error: `Validasi Boxd API Key gagal: ${validation.error}`
+    });
+  }
+
+  const accId = 'acc_' + crypto.randomBytes(6).toString('hex');
+  const created = dbHelper.createAccount({
     id: accId,
     label: label.trim(),
     api_key: trimmedKey,
     notes: notes || '',
-    status: 'testing'
+    ...validation.fields
   });
 
-  // Verify and sync immediately
-  const syncResult = await boxdService.syncAccount(initial);
-
-  if (!syncResult.success) {
-    dbHelper.logAudit('ADD_ACCOUNT_FAILED', accId, { label, error: syncResult.error }, ip);
-    return res.status(400).json({
-      error: `Validasi Boxd API Key gagal: ${syncResult.error}`,
-      account: syncResult.account
-    });
-  }
-
-  dbHelper.logAudit('ADD_ACCOUNT_SUCCESS', accId, { label, user_id: syncResult.account.user_id }, ip);
-  res.status(201).json({ success: true, account: syncResult.account });
+  const safeAccount = dbHelper.getAccounts().find(a => a.id === created.id) || created;
+  dbHelper.logAudit('ADD_ACCOUNT_SUCCESS', accId, { label: label.trim(), user_id: created.user_id, key_scope: created.key_scope }, ip);
+  res.status(201).json({ success: true, account: safeAccount });
 });
 
 app.post('/api/accounts/:id/sync', async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const account = dbHelper.getAccountById(req.params.id);
   if (!account) {
     return res.status(404).json({ error: 'Akun tidak ditemukan' });
@@ -325,7 +383,7 @@ app.patch('/api/accounts/:id', (req, res) => {
 });
 
 app.delete('/api/accounts/:id', (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const account = dbHelper.getAccountById(req.params.id);
   if (!account) {
     return res.status(404).json({ error: 'Akun tidak ditemukan' });
@@ -357,13 +415,11 @@ app.get('/api/machines', async (req, res) => {
     }
 
     const accounts = dbHelper.getAccounts();
-    const activeAccounts = accounts.filter(a => a.status === 'active');
-
-    if (activeAccounts.length === 0) {
+    if (accounts.length === 0) {
       return res.json({ success: true, machines: [], accountStatuses: {} });
     }
 
-    const fullAccounts = activeAccounts.map(a => dbHelper.getAccountById(a.id));
+    const fullAccounts = accounts.map(a => dbHelper.getAccountById(a.id)).filter(Boolean);
     const result = await boxdService.listAllMachines(fullAccounts);
 
     res.json({ success: true, machines: result.machines, accountStatuses: result.accountStatuses });
@@ -373,8 +429,8 @@ app.get('/api/machines', async (req, res) => {
 });
 
 app.post('/api/machines', deployRateLimiter, async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  const { accountId, name, vcpu, memory, region, autoSuspendTimeout, autoHibernateTimeout } = req.body;
+  const ip = auth.extractClientIp(req);
+  const { accountId, name, vcpu, memory, region, shared, autoSuspendTimeout, autoHibernateTimeout } = req.body;
 
   if (!accountId) {
     return res.status(400).json({ error: 'Target akun wajib dipilih' });
@@ -397,11 +453,12 @@ app.post('/api/machines', deployRateLimiter, async (req, res) => {
       vcpu,
       memory,
       region,
+      shared,
       autoSuspendTimeout,
       autoHibernateTimeout
     });
 
-    dbHelper.logAudit('CREATE_MACHINE', account.id, { machineId: newMachine.id, name: newMachine.name }, ip);
+    dbHelper.logAudit('CREATE_MACHINE', account.id, { machineId: newMachine.id, name: newMachine.name, region: newMachine.region, shared: newMachine.shared }, ip);
     res.status(201).json({ success: true, machine: newMachine });
   } catch (err) {
     dbHelper.logAudit('CREATE_MACHINE_FAILED', account.id, { name, error: err.message }, ip);
@@ -410,7 +467,7 @@ app.post('/api/machines', deployRateLimiter, async (req, res) => {
 });
 
 app.post('/api/machines/:id/action', actionRateLimiter, async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const machineId = req.params.id;
   const { accountId, action, region } = req.body;
 
@@ -421,7 +478,7 @@ app.post('/api/machines/:id/action', actionRateLimiter, async (req, res) => {
     return res.status(400).json({ error: 'action wajib disertakan' });
   }
 
-  const allowedActions = ['start', 'stop', 'resume', 'pause', 'reboot', 'wake'];
+  const allowedActions = ['start', 'stop', 'resume', 'pause', 'hibernate', 'reboot', 'wake'];
   if (!allowedActions.includes(action.toLowerCase())) {
     return res.status(400).json({ error: `Aksi tidak valid. Pilihan: ${allowedActions.join(', ')}` });
   }
@@ -442,7 +499,7 @@ app.post('/api/machines/:id/action', actionRateLimiter, async (req, res) => {
 });
 
 app.delete('/api/machines/:id', actionRateLimiter, async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const machineId = req.params.id;
   const accountId = req.query.accountId || req.body.accountId;
   const region = req.query.region || req.body.region;
@@ -467,7 +524,7 @@ app.delete('/api/machines/:id', actionRateLimiter, async (req, res) => {
 });
 
 app.post('/api/machines/:id/exec', execRateLimiter, async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const machineId = req.params.id;
   const { accountId, command, timeout, region } = req.body;
 
@@ -524,7 +581,7 @@ app.get('/api/machines/suggest-name', async (req, res) => {
 // ================= SNAPSHOTS ROUTES =================
 
 app.get('/api/snapshots', async (req, res) => {
-  const { accountId } = req.query;
+  const { accountId, region } = req.query;
   if (!accountId) {
     return res.status(400).json({ error: 'accountId wajib disertakan' });
   }
@@ -534,7 +591,7 @@ app.get('/api/snapshots', async (req, res) => {
   }
 
   try {
-    const snapshots = await boxdService.listSnapshots(account);
+    const snapshots = await boxdService.listSnapshots(account, region || 'all');
     res.json({ success: true, snapshots });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -542,8 +599,8 @@ app.get('/api/snapshots', async (req, res) => {
 });
 
 app.post('/api/snapshots', async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  const { accountId, machineId, name } = req.body;
+  const ip = auth.extractClientIp(req);
+  const { accountId, machineId, name, region } = req.body;
   if (!accountId || !machineId || !name) {
     return res.status(400).json({ error: 'accountId, machineId, dan name wajib disertakan' });
   }
@@ -553,8 +610,8 @@ app.post('/api/snapshots', async (req, res) => {
   }
 
   try {
-    const snapshot = await boxdService.createSnapshot(account, machineId, name);
-    dbHelper.logAudit('CREATE_SNAPSHOT', account.id, { machineId, name }, ip);
+    const snapshot = await boxdService.createSnapshot(account, machineId, name, region);
+    dbHelper.logAudit('CREATE_SNAPSHOT', account.id, { machineId, name, region }, ip);
     res.status(201).json({ success: true, snapshot });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -562,9 +619,10 @@ app.post('/api/snapshots', async (req, res) => {
 });
 
 app.delete('/api/snapshots/:name', async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = auth.extractClientIp(req);
   const { name } = req.params;
   const accountId = req.query.accountId || req.body.accountId;
+  const region = req.query.region || req.body.region;
   if (!accountId) {
     return res.status(400).json({ error: 'accountId wajib disertakan' });
   }
@@ -574,8 +632,8 @@ app.delete('/api/snapshots/:name', async (req, res) => {
   }
 
   try {
-    await boxdService.deleteSnapshot(account, name);
-    dbHelper.logAudit('DELETE_SNAPSHOT', account.id, { name }, ip);
+    await boxdService.deleteSnapshot(account, name, region);
+    dbHelper.logAudit('DELETE_SNAPSHOT', account.id, { name, region }, ip);
     res.json({ success: true, name });
   } catch (err) {
     res.status(400).json({ error: err.message });

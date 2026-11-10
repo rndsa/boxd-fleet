@@ -4,7 +4,7 @@ const dbHelper = require('./db');
 
 const ACCESS_PIN = process.env.ACCESS_PIN || 'change-me-pin-2026';
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-const SESSION_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (aligned with UI & ?key= cookie)
 
 // In-memory rate limiting for login attempts and API endpoints
 const loginAttempts = new Map(); // ip -> { count: number, lockedUntil: number }
@@ -74,30 +74,47 @@ function createRateLimiter({ windowMs = 60000, max = 30, message = 'Rate limit t
   };
 }
 
+// Parse memory string (e.g. "4G", "8GiB", "512M") or number (MB) into MB
+function parseMemoryMb(memory) {
+  if (typeof memory === 'number') return memory;
+  if (typeof memory === 'string') {
+    const trimmed = memory.trim();
+    if (/^\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+    const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(mi?b?|gi?b?)$/i);
+    if (match) {
+      const val = Number(match[1]);
+      const unit = match[2].toLowerCase();
+      return unit.startsWith('g') ? Math.round(val * 1024) : Math.round(val);
+    }
+  }
+  return NaN;
+}
+
 // Input Validation Layer
 function validateMachineInput(data) {
   const { name, region, vcpu, memory } = data;
-  if (name !== undefined) {
-    if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(name)) {
+  if (name !== undefined && name !== null && String(name).trim() !== '') {
+    const cleanName = String(name).trim();
+    if (!/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(cleanName)) {
       return 'Nama mesin harus 2-63 karakter alfanumerik huruf kecil & strip (cth: my-vm-1)';
     }
   }
-  if (region !== undefined) {
-    const allowedRegions = ['nyc', 'sfo', 'fra', 'lon', 'ams'];
+  if (region !== undefined && region !== null && String(region).trim() !== '' && String(region).toLowerCase() !== 'default') {
+    const allowedRegions = ['fra', 'nyc', 'sfo', 'lon', 'ams'];
     if (typeof region !== 'string' || !allowedRegions.includes(region.toLowerCase())) {
-      return `Region harus salah satu dari: ${allowedRegions.join(', ')}`;
+      return `Region harus salah satu dari: default, ${allowedRegions.join(', ')}`;
     }
   }
-  if (vcpu !== undefined) {
+  if (vcpu !== undefined && vcpu !== null && vcpu !== '') {
     const num = Number(vcpu);
     if (isNaN(num) || num < 1 || num > 32) {
       return 'vCPU harus berupa angka valid antara 1 hingga 32';
     }
   }
-  if (memory !== undefined) {
-    const num = Number(memory);
-    if (isNaN(num) || num < 512 || num > 65536) {
-      return 'Memory harus antara 512 MB hingga 64 GB (65536 MB)';
+  if (memory !== undefined && memory !== null && memory !== '') {
+    const mb = parseMemoryMb(memory);
+    if (isNaN(mb) || mb < 512 || mb > 65536) {
+      return 'Memory harus antara 512 MB hingga 64 GB (65536 MB), cth: 4G atau 4096';
     }
   }
   return null;
