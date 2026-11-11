@@ -13,11 +13,22 @@ export default {
 
     const targetUrl = new URL(url.pathname + url.search, `https://${targetHost}`);
 
-    // Create fresh request headers without the client's Host header to prevent 1003/loop
+    // Create fresh request headers without the client's Host or spoofable proxy headers
+    const strippedHeaders = new Set([
+      'host',
+      'cf-ray',
+      'cf-connecting-ip',
+      'cf-visitor',
+      'cf-ipcountry',
+      'x-forwarded-proto',
+      'x-forwarded-for',
+      'x-real-ip',
+      'x-boxd-client-ip',
+      'x-boxd-proxy-secret'
+    ]);
     const newHeaders = new Headers();
     for (const [key, val] of request.headers.entries()) {
-      const lower = key.toLowerCase();
-      if (['host', 'cf-ray', 'cf-connecting-ip', 'cf-visitor', 'cf-ipcountry', 'x-forwarded-proto'].includes(lower)) {
+      if (strippedHeaders.has(key.toLowerCase())) {
         continue;
       }
       newHeaders.set(key, val);
@@ -29,9 +40,12 @@ export default {
 
     const clientIp = request.headers.get('CF-Connecting-IP');
     if (clientIp) {
+      newHeaders.set('X-Boxd-Client-IP', clientIp);
       newHeaders.set('X-Real-IP', clientIp);
       newHeaders.set('X-Forwarded-For', clientIp);
-      newHeaders.set('CF-Connecting-IP', clientIp);
+    }
+    if (env.PROXY_SECRET) {
+      newHeaders.set('X-Boxd-Proxy-Secret', env.PROXY_SECRET);
     }
 
     // Handle WebSocket upgrade for in-VM console

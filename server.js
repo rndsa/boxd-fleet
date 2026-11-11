@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const dbHelper = require('./db');
 const auth = require('./auth');
 const boxdService = require('./boxdService');
+const apiV1Router = require('./apiV1');
 
 const app = express();
 const PORT = process.env.PORT || 7070;
@@ -23,7 +24,18 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-app.use(express.json());
+app.use(express.json({
+  limit: '256kb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  }
+}));
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ ok: false, error: 'Body JSON tidak valid.', code: 'INVALID_JSON' });
+  }
+  return next(err);
+});
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -44,12 +56,22 @@ const actionRateLimiter = auth.createRateLimiter({ windowMs: 60000, max: 25, mes
 const execRateLimiter = auth.createRateLimiter({ windowMs: 60000, max: 15, message: 'Terlalu sering mengeksekusi perintah terminal.' });
 
 // IP Whitelist / Allowed IPs Guard Middleware
+const blockedLogCooldown = new Map();
+function escapeHtmlStr(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 app.use((req, res, next) => {
   const clientIp = auth.extractClientIp(req);
   req.clientIp = clientIp;
 
-  // Static assets are always allowed to render styling
-  if (req.path.match(/\.(css|js|png|jpg|jpeg|svg|ico|webp)$/i)) {
+  // /api/v1/* enforces its own dedicated API Allowed IP Firewall & API Key gate
+  if (req.path === '/api/v1' || req.path.startsWith('/api/v1/')) {
     return next();
   }
 
@@ -58,21 +80,26 @@ app.use((req, res, next) => {
     return next();
   }
 
-  // Check if client IP is whitelisted
+  // Strictly check if client IP matches Allowed IPs (exact IPv4/IPv6 or CIDR)
   if (dbHelper.isIpWhitelisted(clientIp)) {
     return next();
   }
 
-  // Emergency Safety Recovery: If accessed with Master Key (?key=... or x-access-pin)
-  const directKey = (req.query && req.query.key) || req.headers['x-access-pin'];
-  if (directKey && auth.verifyPin(directKey)) {
-    dbHelper.addAllowedIp(clientIp, 'Auto-registered via Master Key');
-    dbHelper.logAudit('IP_WHITELIST_AUTO_ADD', null, { ip: clientIp }, clientIp);
-    return next();
+  // Deduplicate IP_BLOCKED audit entries per IP every 15s (skip noise on asset requests)
+  const now = Date.now();
+  const lastLogged = blockedLogCooldown.get(clientIp) || 0;
+  if (now - lastLogged > 15000) {
+    blockedLogCooldown.set(clientIp, now);
+    if (blockedLogCooldown.size > 500) {
+      const oldestKey = blockedLogCooldown.keys().next().value;
+      blockedLogCooldown.delete(oldestKey);
+    }
+    dbHelper.logAudit('IP_BLOCKED', null, { ip: clientIp, method: req.method, path: req.path }, clientIp);
   }
 
-  // Blocked by IP filter
-  dbHelper.logAudit('IP_BLOCKED', null, { ip: clientIp, path: req.path }, clientIp);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
 
   if (req.path.startsWith('/api')) {
     return res.status(403).json({
@@ -82,7 +109,8 @@ app.use((req, res, next) => {
     });
   }
 
-  return res.status(403).send(`
+  const safeIp = escapeHtmlStr(clientIp);
+  return res.status(403).type('html').send(`
     <!DOCTYPE html>
     <html lang="id">
     <head>
@@ -103,10 +131,10 @@ app.use((req, res, next) => {
       <div class="card">
         <div class="badge">FIREWALL: IP RESTRICTED</div>
         <h1>AKSES DITOLAK (403)</h1>
-        <p>IP perangkat Anda tidak terdaftar dalam daftar IP yang diizinkan (Allowed IPs) untuk mengelola Boxd Fleet.</p>
-        <div class="ip-box">IP PERANGKAT: ${clientIp}</div>
+        <p>IP perangkat Anda tidak terdaftar dalam Allowed IPs untuk mengakses Boxd Fleet.</p>
+        <div class="ip-box">IP PERANGKAT: ${safeIp}</div>
         <div class="hint">
-          Buka konsol menggunakan tautan resmi dengan Master Key Anda (?key=...) untuk mendaftarkan IP ini secara instan.
+          Hubungi admin untuk menambahkan IP atau CIDR ini ke daftar izin.
         </div>
       </div>
     </body>
@@ -114,8 +142,16 @@ app.use((req, res, next) => {
   `);
 });
 
-// Serve frontend static files
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve frontend static files (never cache HTML/JS/CSS so UI & security updates always load fresh)
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // Prevent stale HTTP/edge caching on ALL live auth, telemetry & fleet API responses
 app.use('/api', (req, res, next) => {
@@ -133,17 +169,18 @@ app.get('/api/auth/status', (req, res) => {
 
   if (directKey && auth.verifyPin(directKey)) {
     const newToken = auth.signSession('admin');
-    res.cookie('boxd_session', newToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-    });
+    res.cookie('boxd_session', newToken, auth.getSessionCookieOptions(req));
     return res.json({ authenticated: true, user: 'admin', token: newToken });
   }
 
   if (token) {
     const session = auth.verifySession(token);
     if (session) {
+      // Sliding refresh if token is older than 1 hour so active cookie sessions stay valid
+      if (!session.iat || Date.now() - session.iat > 60 * 60 * 1000) {
+        const refreshedToken = auth.signSession(session.u || 'admin');
+        res.cookie('boxd_session', refreshedToken, auth.getSessionCookieOptions(req));
+      }
       return res.json({ authenticated: true, user: session.u || 'admin', token });
     }
   }
@@ -175,21 +212,20 @@ app.post('/api/auth/login', (req, res) => {
   auth.recordLoginAttempt(ip, true);
   const token = auth.signSession('admin');
 
-  // Set secure cookie (30 days, aligned with ?key= & auth.js)
-  res.cookie('boxd_session', token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-  });
+  // Set persistent cookie (30 days, HttpOnly, SameSite=Lax, Secure on HTTPS)
+  res.cookie('boxd_session', token, auth.getSessionCookieOptions(req));
 
   dbHelper.logAudit('LOGIN_SUCCESS', null, { user: 'admin' }, ip);
   res.json({ success: true, token, user: 'admin' });
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('boxd_session');
+  res.clearCookie('boxd_session', auth.getClearCookieOptions(req));
   res.json({ success: true });
 });
+
+// External Developer API (/api/v1/*) - enforces dedicated API Keys, API IP Firewall & HMAC
+app.use('/api/v1', apiV1Router);
 
 // Protect all following /api/* routes
 app.use('/api', auth.requireAuth);
@@ -430,7 +466,21 @@ app.get('/api/machines', async (req, res) => {
 
 app.post('/api/machines', deployRateLimiter, async (req, res) => {
   const ip = auth.extractClientIp(req);
-  const { accountId, name, vcpu, memory, region, shared, autoSuspendTimeout, autoHibernateTimeout } = req.body;
+  const {
+    accountId,
+    name,
+    vcpu,
+    memory,
+    region,
+    shared,
+    autoSuspendTimeout,
+    autoHibernateTimeout,
+    botProtectionMode,
+    idleIgnoreOutbound,
+    autoSetup,
+    sshPassword,
+    sshUser
+  } = req.body;
 
   if (!accountId) {
     return res.status(400).json({ error: 'Target akun wajib dipilih' });
@@ -440,6 +490,26 @@ app.post('/api/machines', deployRateLimiter, async (req, res) => {
   const valError = auth.validateMachineInput({ name, region, vcpu, memory });
   if (valError) {
     return res.status(400).json({ error: valError });
+  }
+
+  const runtimeErr = auth.validateRuntimeSettings({
+    autoSuspendTimeout,
+    autoHibernateTimeout,
+    botProtectionMode,
+    idleIgnoreOutbound: idleIgnoreOutbound !== undefined ? !!idleIgnoreOutbound : undefined
+  });
+  if (runtimeErr) {
+    return res.status(400).json({ error: runtimeErr });
+  }
+
+  if (sshPassword !== undefined && sshPassword !== null && String(sshPassword).length > 0) {
+    const sshErr = auth.validateSshPasswordInput({
+      password: String(sshPassword),
+      sshUser: sshUser || 'root'
+    });
+    if (sshErr) {
+      return res.status(400).json({ error: sshErr });
+    }
   }
 
   const account = dbHelper.getAccountById(accountId);
@@ -455,13 +525,107 @@ app.post('/api/machines', deployRateLimiter, async (req, res) => {
       region,
       shared,
       autoSuspendTimeout,
-      autoHibernateTimeout
+      autoHibernateTimeout,
+      botProtectionMode,
+      idleIgnoreOutbound,
+      autoSetup,
+      sshPassword: sshPassword ? String(sshPassword) : undefined,
+      sshUser: sshUser || 'root'
     });
 
-    dbHelper.logAudit('CREATE_MACHINE', account.id, { machineId: newMachine.id, name: newMachine.name, region: newMachine.region, shared: newMachine.shared }, ip);
+    dbHelper.logAudit('CREATE_MACHINE', account.id, {
+      machineId: newMachine.id,
+      name: newMachine.name,
+      region: newMachine.region,
+      shared: newMachine.shared,
+      alwaysOn: !!newMachine.alwaysOn,
+      autoUpdateEnabled: !!(newMachine.vmConfig && newMachine.vmConfig.autoUpdateEnabled),
+      sshPasswordConfigured: !!(newMachine.sshAccess && newMachine.sshAccess.enabled)
+    }, ip);
     res.status(201).json({ success: true, machine: newMachine });
   } catch (err) {
     dbHelper.logAudit('CREATE_MACHINE_FAILED', account.id, { name, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/from-snapshot', deployRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const { accountId, fromSnapshot, name, region, shared, alwaysOn } = req.body || {};
+
+  if (!accountId || !fromSnapshot) {
+    return res.status(400).json({ error: 'accountId dan fromSnapshot wajib disertakan' });
+  }
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const machine = await boxdService.createMachineFromSnapshot(account, {
+      fromSnapshot,
+      name,
+      region,
+      shared,
+      alwaysOn: !!alwaysOn
+    });
+    dbHelper.logAudit('CREATE_MACHINE_FROM_SNAPSHOT', account.id, {
+      machineId: machine.id,
+      fromSnapshot,
+      region: machine.region
+    }, ip);
+    res.status(201).json({ success: true, machine });
+  } catch (err) {
+    dbHelper.logAudit('CREATE_MACHINE_FROM_SNAPSHOT_FAILED', account.id, { fromSnapshot, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/autoupdate-all', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const {
+    accountId = 'all',
+    runUpgrade = false,
+    wakeStandby = true,
+    intervalHours = 12,
+    updateRuntimes = true
+  } = req.body || {};
+
+  const hrs = Number(intervalHours);
+  if (!Number.isInteger(hrs) || hrs < 1 || hrs > 168) {
+    return res.status(400).json({ error: 'Interval auto-update harus 1 sampai 168 jam' });
+  }
+
+  let accounts = [];
+  if (accountId && accountId !== 'all') {
+    const acc = dbHelper.getAccountById(accountId);
+    if (!acc) return res.status(404).json({ error: 'Akun tidak ditemukan' });
+    accounts = [acc];
+  } else {
+    accounts = dbHelper.getAccounts().map(a => dbHelper.getAccountById(a.id)).filter(Boolean);
+  }
+
+  if (accounts.length === 0) {
+    return res.status(400).json({ error: 'Belum ada akun Boxd yang terhubung' });
+  }
+
+  try {
+    const summary = await boxdService.prepareFleetAutoUpdate(accounts, {
+      runUpgrade: !!runUpgrade,
+      wakeStandby: wakeStandby !== false,
+      intervalHours: hrs,
+      updateRuntimes: !!updateRuntimes
+    });
+    dbHelper.logAudit('BATCH_VM_AUTOUPDATE', accountId === 'all' ? null : accountId, {
+      total: summary.total,
+      configured: summary.configured,
+      upgradedJobs: summary.upgradedJobs,
+      failed: summary.failed
+    }, ip);
+    res.json(summary);
+  } catch (err) {
+    dbHelper.logAudit('BATCH_VM_AUTOUPDATE_FAILED', accountId === 'all' ? null : accountId, { error: err.message }, ip);
     res.status(400).json({ error: err.message });
   }
 });
@@ -553,6 +717,416 @@ app.post('/api/machines/:id/exec', execRateLimiter, async (req, res) => {
   }
 });
 
+app.get('/api/machines/:id/ssh-password', async (req, res) => {
+  const machineId = req.params.id;
+  const { accountId, region } = req.query;
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const status = await boxdService.getVmSshPasswordStatus(account, machineId, region);
+    res.json({ success: true, ...status });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/ssh-password', execRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, password, sshUser = 'root' } = req.body || {};
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+
+  const valErr = auth.validateSshPasswordInput({ password, sshUser });
+  if (valErr) {
+    return res.status(400).json({ error: valErr });
+  }
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const result = await boxdService.setupVmSshPassword(account, machineId, {
+      password,
+      sshUser,
+      region
+    });
+    dbHelper.logAudit('SET_VM_SSH_PASSWORD', account.id, {
+      machineId,
+      sshUser: result.sshUser,
+      publicPort: result.publicPort,
+      region: result.region
+    }, ip);
+    res.json(result);
+  } catch (err) {
+    dbHelper.logAudit('SET_VM_SSH_PASSWORD_FAILED', account.id, { machineId, sshUser, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/machines/:id/ssh-password', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const accountId = req.query.accountId || (req.body && req.body.accountId);
+  const region = req.query.region || (req.body && req.body.region);
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const result = await boxdService.disableVmSshPassword(account, machineId, region);
+    dbHelper.logAudit('DISABLE_VM_SSH_PASSWORD', account.id, { machineId, region: result.region }, ip);
+    res.json(result);
+  } catch (err) {
+    dbHelper.logAudit('DISABLE_VM_SSH_PASSWORD_FAILED', account.id, { machineId, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ================= VM AUTO-UPDATE, READINESS, POWER, PORTS & PROXIES =================
+
+app.get('/api/machines/:id/manage', async (req, res) => {
+  const machineId = req.params.id;
+  const { accountId, region } = req.query;
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const state = await boxdService.getVmManageState(account, machineId, region);
+    res.json({ success: true, ...state });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/autoupdate/config', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, enabled, intervalHours = 12, updateRuntimes = true } = req.body || {};
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+  const hrs = Number(intervalHours);
+  if (!Number.isInteger(hrs) || hrs < 1 || hrs > 168) {
+    return res.status(400).json({ error: 'Interval auto-update harus 1 sampai 168 jam' });
+  }
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const result = await boxdService.configureVmAutoUpdate(account, machineId, {
+      enabled: !!enabled,
+      intervalHours: hrs,
+      updateRuntimes: !!updateRuntimes,
+      region
+    });
+    dbHelper.logAudit('CONFIG_VM_AUTOUPDATE', account.id, {
+      machineId,
+      enabled: !!enabled,
+      intervalHours: hrs,
+      updateRuntimes: !!updateRuntimes
+    }, ip);
+    res.json(result);
+  } catch (err) {
+    dbHelper.logAudit('CONFIG_VM_AUTOUPDATE_FAILED', account.id, { machineId, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/autoupdate/run', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, updateRuntimes, intervalHours } = req.body || {};
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const result = await boxdService.runVmUpdateNow(account, machineId, {
+      region,
+      updateRuntimes,
+      intervalHours
+    });
+    dbHelper.logAudit('RUN_VM_AUTOUPDATE', account.id, { machineId, jobId: result.jobId, region: result.region }, ip);
+    res.status(202).json(result);
+  } catch (err) {
+    dbHelper.logAudit('RUN_VM_AUTOUPDATE_FAILED', account.id, { machineId, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/packages', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, upgradeOs = false, starterKits = [], aptPackages = [], npmPackages = [] } = req.body || {};
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+  if (!Array.isArray(starterKits)) {
+    return res.status(400).json({ error: 'starterKits harus berupa array' });
+  }
+
+  const aptVal = auth.validatePackageList(aptPackages, 'apt');
+  if (aptVal.error) return res.status(400).json({ error: aptVal.error });
+  const npmVal = auth.validatePackageList(npmPackages, 'npm');
+  if (npmVal.error) return res.status(400).json({ error: npmVal.error });
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const result = await boxdService.startVmProvisionJob(account, machineId, {
+      upgradeOs: !!upgradeOs,
+      starterKits,
+      aptPackages: aptVal.packages,
+      npmPackages: npmVal.packages,
+      region
+    });
+    dbHelper.logAudit('INSTALL_VM_PACKAGES', account.id, {
+      machineId,
+      starterKits,
+      aptCount: aptVal.packages.length,
+      npmCount: npmVal.packages.length,
+      jobId: result.jobId
+    }, ip);
+    res.status(202).json(result);
+  } catch (err) {
+    dbHelper.logAudit('INSTALL_VM_PACKAGES_FAILED', account.id, { machineId, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/runtime-settings', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const {
+    accountId,
+    region,
+    alwaysOn,
+    autoSuspendTimeout,
+    autoHibernateTimeout,
+    botProtectionMode,
+    idleIgnoreOutbound
+  } = req.body || {};
+
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId wajib disertakan' });
+  }
+  const valErr = auth.validateRuntimeSettings({
+    autoSuspendTimeout,
+    autoHibernateTimeout,
+    botProtectionMode,
+    idleIgnoreOutbound: idleIgnoreOutbound !== undefined ? !!idleIgnoreOutbound : undefined
+  });
+  if (valErr) return res.status(400).json({ error: valErr });
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ error: 'Akun tidak ditemukan' });
+  }
+
+  try {
+    const machine = await boxdService.updateVmRuntimeSettings(account, machineId, {
+      alwaysOn: !!alwaysOn,
+      autoSuspendTimeout,
+      autoHibernateTimeout,
+      botProtectionMode,
+      idleIgnoreOutbound
+    }, region);
+    dbHelper.logAudit('UPDATE_VM_RUNTIME_SETTINGS', account.id, {
+      machineId,
+      alwaysOn: !!machine.alwaysOn,
+      autoSuspendTimeout: machine.autoSuspendTimeout,
+      autoHibernateTimeout: machine.autoHibernateTimeout,
+      botProtectionMode: machine.botProtectionMode
+    }, ip);
+    res.json({ success: true, machine });
+  } catch (err) {
+    dbHelper.logAudit('UPDATE_VM_RUNTIME_SETTINGS_FAILED', account.id, { machineId, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/resize', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, vcpu, memory } = req.body || {};
+
+  if (!accountId) return res.status(400).json({ error: 'accountId wajib disertakan' });
+  const valErr = auth.validateMachineInput({ vcpu, memory });
+  if (valErr) return res.status(400).json({ error: valErr });
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) return res.status(404).json({ error: 'Akun tidak ditemukan' });
+
+  try {
+    const machine = await boxdService.resizeVm(account, machineId, { vcpu, memory, region });
+    dbHelper.logAudit('RESIZE_VM', account.id, { machineId, vcpu, memory }, ip);
+    res.json({ success: true, machine });
+  } catch (err) {
+    dbHelper.logAudit('RESIZE_VM_FAILED', account.id, { machineId, vcpu, error: err.message }, ip);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/ports', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, port, protocol = 'tcp' } = req.body || {};
+
+  if (!accountId) return res.status(400).json({ error: 'accountId wajib disertakan' });
+  const portErr = auth.validatePortNumber(port);
+  if (portErr) return res.status(400).json({ error: portErr });
+  if (!['tcp', 'udp', 'both'].includes(protocol)) {
+    return res.status(400).json({ error: 'Protocol harus tcp, udp, atau both' });
+  }
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) return res.status(404).json({ error: 'Akun tidak ditemukan' });
+
+  try {
+    const exposed = await boxdService.exposeVmPort(account, machineId, { port, protocol, region });
+    dbHelper.logAudit('EXPOSE_VM_PORT', account.id, { machineId, port, protocol }, ip);
+    res.status(201).json({ success: true, exposed });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/machines/:id/ports/:port', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const port = req.params.port;
+  const accountId = req.query.accountId || (req.body && req.body.accountId);
+  const region = req.query.region || (req.body && req.body.region);
+
+  if (!accountId) return res.status(400).json({ error: 'accountId wajib disertakan' });
+  const portErr = auth.validatePortNumber(port);
+  if (portErr) return res.status(400).json({ error: portErr });
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) return res.status(404).json({ error: 'Akun tidak ditemukan' });
+
+  try {
+    await boxdService.unexposeVmPort(account, machineId, { port, region });
+    dbHelper.logAudit('UNEXPOSE_VM_PORT', account.id, { machineId, port: Number(port) }, ip);
+    res.json({ success: true, port: Number(port) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/proxies/default-port', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, port } = req.body || {};
+
+  if (!accountId) return res.status(400).json({ error: 'accountId wajib disertakan' });
+  if (port !== 'auto') {
+    const portErr = auth.validatePortNumber(port);
+    if (portErr) return res.status(400).json({ error: portErr });
+  }
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) return res.status(404).json({ error: 'Akun tidak ditemukan' });
+
+  try {
+    const proxy = await boxdService.setVmDefaultProxyPort(account, machineId, { port, region });
+    dbHelper.logAudit('SET_DEFAULT_PROXY_PORT', account.id, { machineId, port }, ip);
+    res.json({ success: true, proxy });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/machines/:id/proxies', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const { accountId, region, name, port } = req.body || {};
+
+  if (!accountId) return res.status(400).json({ error: 'accountId wajib disertakan' });
+  const subErr = auth.validateProxySubdomain(name);
+  if (subErr) return res.status(400).json({ error: subErr });
+  const portErr = auth.validatePortNumber(port);
+  if (portErr) return res.status(400).json({ error: portErr });
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) return res.status(404).json({ error: 'Akun tidak ditemukan' });
+
+  try {
+    const proxy = await boxdService.createVmNamedProxy(account, machineId, { name, port, region });
+    dbHelper.logAudit('CREATE_VM_PROXY', account.id, { machineId, name, port: Number(port) }, ip);
+    res.status(201).json({ success: true, proxy });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/machines/:id/proxies/:name', actionRateLimiter, async (req, res) => {
+  const ip = auth.extractClientIp(req);
+  const machineId = req.params.id;
+  const name = req.params.name;
+  const accountId = req.query.accountId || (req.body && req.body.accountId);
+  const region = req.query.region || (req.body && req.body.region);
+
+  if (!accountId) return res.status(400).json({ error: 'accountId wajib disertakan' });
+
+  const account = dbHelper.getAccountById(accountId);
+  if (!account) return res.status(404).json({ error: 'Akun tidak ditemukan' });
+
+  try {
+    await boxdService.deleteVmNamedProxy(account, machineId, { name, region });
+    dbHelper.logAudit('DELETE_VM_PROXY', account.id, { machineId, name }, ip);
+    res.json({ success: true, name });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/jobs/:jobId', (req, res) => {
+  const job = boxdService.getVmJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job tidak ditemukan atau sudah kedaluwarsa' });
+  }
+  res.json({ success: true, job });
+});
+
 app.get('/api/machines/suggest-name', async (req, res) => {
   const { accountId } = req.query;
   let account = null;
@@ -603,6 +1177,10 @@ app.post('/api/snapshots', async (req, res) => {
   const { accountId, machineId, name, region } = req.body;
   if (!accountId || !machineId || !name) {
     return res.status(400).json({ error: 'accountId, machineId, dan name wajib disertakan' });
+  }
+  const snapErr = auth.validateSnapshotName(name);
+  if (snapErr) {
+    return res.status(400).json({ error: snapErr });
   }
   const account = dbHelper.getAccountById(accountId);
   if (!account) {
@@ -658,7 +1236,10 @@ app.get('/api/security/ip-whitelist', (req, res) => {
   try {
     const clientIp = auth.extractClientIp(req);
     const enabled = dbHelper.isIpWhitelistEnabled();
-    const allowedIps = dbHelper.getAllowedIps();
+    const allowedIps = dbHelper.getAllowedIps().map(item => ({
+      ...item,
+      matchesCurrent: dbHelper.ipMatchesRule(clientIp, item.ip)
+    }));
     res.json({ success: true, enabled, currentIp: clientIp, allowedIps });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -670,14 +1251,14 @@ app.post('/api/security/ip-whitelist/toggle', (req, res) => {
     const { enabled } = req.body;
     const currentIp = auth.extractClientIp(req);
 
-    // If enabling, ensure caller's current IP is whitelisted first to prevent accidental self-lockout
+    // If enabling, ensure caller's current IP is allowed first to prevent accidental self-lockout
     if (enabled) {
-      dbHelper.addAllowedIp(currentIp, 'Admin Device');
+      dbHelper.ensureIpAllowed(currentIp, 'Admin Device');
     }
 
     dbHelper.setIpWhitelistEnabled(!!enabled);
     dbHelper.logAudit('IP_WHITELIST_TOGGLE', null, { enabled: !!enabled, triggeredBy: currentIp }, currentIp);
-    res.json({ success: true, enabled: !!enabled });
+    res.json({ success: true, enabled: !!enabled, currentIp });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -689,9 +1270,12 @@ app.post('/api/security/ip-whitelist', (req, res) => {
     if (!ip || typeof ip !== 'string' || !ip.trim()) {
       return res.status(400).json({ error: 'Alamat IP wajib diisi' });
     }
-    const cleanIp = ip.trim();
-    const added = dbHelper.addAllowedIp(cleanIp, label ? label.trim() : 'Allowed Device');
-    dbHelper.logAudit('IP_WHITELIST_ADD', null, { ip: cleanIp, label }, auth.extractClientIp(req));
+    const parsed = dbHelper.parseIpOrCidr(ip);
+    if (!parsed) {
+      return res.status(400).json({ error: 'Format IP atau CIDR tidak valid (cth: 203.0.113.10, 2001:db8::1, atau 192.168.1.0/24)' });
+    }
+    const added = dbHelper.addAllowedIp(parsed.canonical, label ? label.trim() : 'Allowed Device');
+    dbHelper.logAudit('IP_WHITELIST_ADD', null, { ip: parsed.canonical, label }, auth.extractClientIp(req));
     res.json({ success: true, item: added });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -723,8 +1307,225 @@ app.post('/api/security/ip-whitelist/allow-my-ip', (req, res) => {
   }
 });
 
-// Catch-all route to serve SPA
+// ================= EXTERNAL API SECURITY & KEY MANAGEMENT ROUTES =================
+
+app.get('/api/security/api-config', (req, res) => {
+  try {
+    const currentIp = auth.extractClientIp(req);
+    const apiEnabled = dbHelper.isApiEnabled();
+    const ipWhitelistEnabled = dbHelper.isApiIpWhitelistEnabled();
+    const allowedIps = dbHelper.getApiAllowedIps().map(item => ({
+      ...item,
+      matchesCurrent: dbHelper.ipMatchesRule(currentIp, item.ip)
+    }));
+    const keys = dbHelper.getApiKeys();
+    const logs = dbHelper.getRecentApiRequestLogs(40);
+    res.json({
+      success: true,
+      apiEnabled,
+      ipWhitelistEnabled,
+      currentIp,
+      allowedIps,
+      keys,
+      logs,
+      validScopes: auth.VALID_API_SCOPES
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/security/api-config/toggle', (req, res) => {
+  try {
+    const { enabled } = req.body || {};
+    dbHelper.setApiEnabled(!!enabled);
+    dbHelper.logAudit('API_MASTER_TOGGLE', null, { enabled: !!enabled }, auth.extractClientIp(req));
+    res.json({ success: true, apiEnabled: !!enabled });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/security/api-ips/toggle', (req, res) => {
+  try {
+    const { enabled } = req.body || {};
+    dbHelper.setApiIpWhitelistEnabled(!!enabled);
+    dbHelper.logAudit('API_IP_WHITELIST_TOGGLE', null, { enabled: !!enabled }, auth.extractClientIp(req));
+    res.json({ success: true, ipWhitelistEnabled: !!enabled, currentIp: auth.extractClientIp(req) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/security/api-ips', (req, res) => {
+  try {
+    const { ip, label } = req.body || {};
+    if (!ip || typeof ip !== 'string' || !ip.trim()) {
+      return res.status(400).json({ error: 'Alamat IP atau CIDR wajib diisi.' });
+    }
+    const parsed = dbHelper.parseIpOrCidr(ip);
+    if (!parsed) {
+      return res.status(400).json({ error: 'Format IP atau CIDR tidak valid (cth: 38.47.91.12 atau 10.0.0.0/24).' });
+    }
+    const added = dbHelper.addApiAllowedIp(parsed.canonical, label ? String(label).trim() : 'API Client');
+    dbHelper.logAudit('API_IP_WHITELIST_ADD', null, { ip: parsed.canonical, label }, auth.extractClientIp(req));
+    res.json({ success: true, item: added });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/security/api-ips/allow-my-ip', (req, res) => {
+  try {
+    const clientIp = auth.extractClientIp(req);
+    const added = dbHelper.addApiAllowedIp(clientIp, 'Admin Device (' + new Date().toLocaleDateString('id-ID') + ')');
+    dbHelper.logAudit('API_IP_WHITELIST_ADD_SELF', null, { ip: clientIp }, clientIp);
+    res.json({ success: true, item: added, currentIp: clientIp });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/security/api-ips/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id || isNaN(id)) {
+      return res.status(400).json({ error: 'ID tidak valid.' });
+    }
+    dbHelper.deleteApiAllowedIp(id);
+    dbHelper.logAudit('API_IP_WHITELIST_DELETE', null, { id }, auth.extractClientIp(req));
+    res.json({ success: true, id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/api-keys', (req, res) => {
+  try {
+    res.json({ success: true, keys: dbHelper.getApiKeys(), validScopes: auth.VALID_API_SCOPES });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/api-keys', (req, res) => {
+  try {
+    const check = auth.validateApiKeyInput(req.body || {}, { isUpdate: false });
+    if (check.error) return res.status(400).json({ error: check.error });
+    const d = check.data;
+    const id = 'key_' + crypto.randomBytes(6).toString('hex');
+    const pair = auth.generateApiKeyPair({ requireHmac: d.requireHmac });
+
+    const created = dbHelper.createApiKey({
+      id,
+      name: d.name,
+      keyPrefix: pair.keyPrefix,
+      keyHash: pair.keyHash,
+      hmacSecretEnc: pair.hmacSecretEnc,
+      requireHmac: d.requireHmac,
+      scopes: d.scopes,
+      allowedAccountIds: d.allowedAccountIds,
+      allowedIps: d.allowedIps,
+      rateLimitRpm: d.rateLimitRpm,
+      maxDeployPerHour: d.maxDeployPerHour,
+      maxVcpuPerVm: d.maxVcpuPerVm,
+      expiresAt: d.expiresAt
+    });
+
+    dbHelper.logAudit('API_KEY_CREATE', id, { name: d.name, requireHmac: d.requireHmac, scopes: d.scopes, ipRules: d.allowedIps.length }, auth.extractClientIp(req));
+    res.status(201).json({
+      success: true,
+      apiKey: created,
+      rawKey: pair.rawKey,
+      rawHmacSecret: pair.rawHmacSecret || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/api-keys/:id', (req, res) => {
+  try {
+    const existingRow = dbHelper.db.prepare('SELECT id, name, hmac_secret_enc FROM api_keys WHERE id = ?').get(req.params.id);
+    if (!existingRow) {
+      return res.status(404).json({ error: 'API Key tidak ditemukan.' });
+    }
+
+    const check = auth.validateApiKeyInput(req.body || {}, { isUpdate: true });
+    if (check.error) return res.status(400).json({ error: check.error });
+    const d = check.data;
+
+    let rawHmacSecret = null;
+    if (d.requireHmac === true && !existingRow.hmac_secret_enc) {
+      const pair = auth.generateApiKeyPair({ requireHmac: true });
+      d.hmacSecretEnc = pair.hmacSecretEnc;
+      rawHmacSecret = pair.rawHmacSecret;
+    }
+
+    const updated = dbHelper.updateApiKey(req.params.id, d);
+    dbHelper.logAudit('API_KEY_UPDATE', req.params.id, { name: updated.name, enabled: updated.enabled, requireHmac: updated.requireHmac }, auth.extractClientIp(req));
+    res.json({
+      success: true,
+      apiKey: updated,
+      rawHmacSecret
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/api-keys/:id/rotate', (req, res) => {
+  try {
+    const existing = dbHelper.getApiKeyById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: 'API Key tidak ditemukan.' });
+    }
+    const pair = auth.generateApiKeyPair({ requireHmac: existing.requireHmac });
+    const updated = dbHelper.updateApiKey(req.params.id, {
+      keyPrefix: pair.keyPrefix,
+      keyHash: pair.keyHash,
+      hmacSecretEnc: existing.requireHmac ? pair.hmacSecretEnc : null
+    });
+    dbHelper.logAudit('API_KEY_ROTATE', req.params.id, { name: existing.name }, auth.extractClientIp(req));
+    res.json({
+      success: true,
+      apiKey: updated,
+      rawKey: pair.rawKey,
+      rawHmacSecret: pair.rawHmacSecret || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/api-keys/:id', (req, res) => {
+  try {
+    const existing = dbHelper.getApiKeyById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: 'API Key tidak ditemukan.' });
+    }
+    dbHelper.deleteApiKey(req.params.id);
+    dbHelper.logAudit('API_KEY_DELETE', req.params.id, { name: existing.name }, auth.extractClientIp(req));
+    res.json({ success: true, id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/api-logs', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 50;
+    res.json({ success: true, logs: dbHelper.getRecentApiRequestLogs(limit) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Catch-all route to serve SPA (never cache HTML shell)
 app.use((req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

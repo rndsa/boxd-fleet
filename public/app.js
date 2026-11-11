@@ -10,6 +10,15 @@ let appState = {
   currentTab: 'overview',
   selectedAccountId: 'all',
   execTarget: null,
+  sshPassTarget: null,
+  sshPassStatus: null,
+  sshSavedRevealed: false,
+  manageTarget: null,
+  manageState: null,
+  manageActiveTab: 'update',
+  manageJobPoller: null,
+  liveSyncEnabled: localStorage.getItem('boxd_live_sync') !== '0',
+  liveSyncTimer: null,
   statusFilter: 'all',
   searchQuery: ''
 };
@@ -17,13 +26,32 @@ let appState = {
 // Init
 document.addEventListener('DOMContentLoaded', () => {
   initNeoTheme();
+  updateLiveSyncBtnUI();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && appState.authenticated && appState.liveSyncEnabled) {
+      fetchDashboardData({ silent: true });
+    }
+  });
   checkAuth();
 });
 
 // ================= FETCH HELPER WITH AUTH GUARD =================
 
 async function apiFetch(url, options = {}) {
-  const res = await fetch(url, options);
+  const res = await fetch(url, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    ...options
+  });
+  if (res.status === 403) {
+    try {
+      const errData = await res.clone().json();
+      if (errData && errData.code === 'IP_NOT_ALLOWED') {
+        window.location.reload();
+        return res;
+      }
+    } catch (e) {}
+  }
   if (res.status === 401 && appState.authenticated) {
     showPinGate();
     showToast('Sesi berakhir, silakan masukkan PIN akses lagi.', 'error');
@@ -45,8 +73,10 @@ function applyNeoTheme(theme) {
   const icon = document.getElementById('themeToggleIcon');
   const label = document.getElementById('themeToggleLabel');
   if (icon && label) {
-    icon.textContent = isDark ? '🌙' : '☀️';
-    label.textContent = isDark ? 'DARK' : 'LIGHT';
+    icon.innerHTML = isDark
+      ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+      : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+    label.textContent = isDark ? 'Dark' : 'Light';
   }
 }
 
@@ -58,7 +88,7 @@ function toggleNeoTheme() {
 
 // ================= AUTHENTICATION =================
 
-async function checkAuth() {
+async function checkAuth(retry = true) {
   try {
     const urlParams = new URLSearchParams(window.location.search);
     const keyParam = urlParams.get('key');
@@ -67,7 +97,24 @@ async function checkAuth() {
       endpoint += `?key=${encodeURIComponent(keyParam)}`;
     }
 
-    const res = await fetch(endpoint);
+    const res = await fetch(endpoint, {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (res.status === 403) {
+      try {
+        const blockData = await res.json();
+        if (blockData && blockData.code === 'IP_NOT_ALLOWED') {
+          window.location.reload();
+          return;
+        }
+      } catch (e) {}
+    }
+    if (!res.ok && res.status >= 500 && retry) {
+      await new Promise(r => setTimeout(r, 450));
+      return checkAuth(false);
+    }
+
     const data = await res.json();
     if (res.ok && data.authenticated) {
       if (keyParam) {
@@ -77,6 +124,10 @@ async function checkAuth() {
       return;
     }
   } catch (err) {
+    if (retry) {
+      await new Promise(r => setTimeout(r, 450));
+      return checkAuth(false);
+    }
     console.error('Auth check error:', err);
   }
   showPinGate();
@@ -89,19 +140,33 @@ function showDashboard() {
   if (gate) gate.classList.add('hidden');
   if (app) app.classList.remove('hidden');
   fetchDashboardData();
+  scheduleLiveAutoRefresh();
 }
 
 function showPinGate() {
   appState.authenticated = false;
+  stopLiveAutoRefresh();
   const gate = document.getElementById('securityGate');
   const app = document.getElementById('appContainer');
   if (gate) gate.classList.remove('hidden');
   if (app) app.classList.add('hidden');
   const input = document.getElementById('pinInput');
+  const toggleBtn = document.getElementById('pinToggleBtn');
   if (input) {
+    input.type = 'password';
     input.value = '';
     setTimeout(() => input.focus(), 100);
   }
+  if (toggleBtn) toggleBtn.textContent = 'Lihat';
+}
+
+function togglePinInputVisibility() {
+  const input = document.getElementById('pinInput');
+  const btn = document.getElementById('pinToggleBtn');
+  if (!input || !btn) return;
+  const reveal = input.type === 'password';
+  input.type = reveal ? 'text' : 'password';
+  btn.textContent = reveal ? 'Sembunyi' : 'Lihat';
 }
 
 async function handleLogin(e) {
@@ -121,13 +186,17 @@ async function handleLogin(e) {
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin })
     });
+    if (res.status === 403) {
+      window.location.reload();
+      return;
+    }
     const data = await res.json();
 
     if (res.ok && data.success) {
-      showToast('Autentikasi berhasil! Sesi aktif 30 hari.', 'success');
       showDashboard();
     } else {
       if (errorEl) {
@@ -149,14 +218,14 @@ async function handleLogin(e) {
   } finally {
     if (submitBtn) {
       submitBtn.disabled = false;
-      submitBtn.innerHTML = '<span>BUKA KONSOL →</span>';
+      submitBtn.innerHTML = '<span>Buka Konsol →</span>';
     }
   }
 }
 
 async function handleLogout() {
   try {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
   } catch (e) {}
   closeSecurityCenterModal();
   showPinGate();
@@ -200,10 +269,28 @@ function renderIpWhitelist() {
   const badge = document.getElementById('ipWhitelistStatusBadge');
   const toggleBtn = document.getElementById('ipWhitelistToggleBtn');
   const detectedIpEl = document.getElementById('currentDetectedIp');
+  const allowBtn = document.getElementById('allowCurrentIpBtn');
   const tbody = document.getElementById('allowedIpsTableBody');
 
   if (detectedIpEl) {
     detectedIpEl.textContent = ipWhitelistState.currentIp || '-';
+  }
+
+  const allowedList = Array.isArray(ipWhitelistState.allowedIps) ? ipWhitelistState.allowedIps : [];
+  const currentAlreadyAllowed = allowedList.some(
+    item => Boolean(item.matchesCurrent) || item.ip === ipWhitelistState.currentIp
+  );
+
+  if (allowBtn) {
+    if (currentAlreadyAllowed) {
+      allowBtn.textContent = '✓ Sudah Diizinkan';
+      allowBtn.className = 'stat-subpill badge-green-soft font-mono';
+      allowBtn.disabled = true;
+    } else {
+      allowBtn.textContent = '+ Izinkan IP Ini';
+      allowBtn.className = 'btn-stark-cta btn-sm-cta';
+      allowBtn.disabled = false;
+    }
   }
 
   if (badge) {
@@ -217,22 +304,22 @@ function renderIpWhitelist() {
   }
 
   if (tbody) {
-    if (!ipWhitelistState.allowedIps || ipWhitelistState.allowedIps.length === 0) {
+    if (allowedList.length === 0) {
       tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 10px; color: var(--text-muted);">Belum ada IP terdaftar.</td></tr>';
       return;
     }
 
-    tbody.innerHTML = ipWhitelistState.allowedIps.map(item => {
-      const isCurrent = item.ip === ipWhitelistState.currentIp;
+    tbody.innerHTML = allowedList.map(item => {
+      const isCurrent = Boolean(item.matchesCurrent) || item.ip === ipWhitelistState.currentIp;
       return `
         <tr>
           <td style="font-weight: 700; color: var(--text-primary); font-size: 11px;">
             ${escapeHTML(item.ip)}
-            ${isCurrent ? '<span class="stat-subpill badge-green-soft" style="font-size: 8px; margin-left: 4px;">INI</span>' : ''}
+            ${isCurrent ? '<span class="stat-subpill badge-green-soft" style="font-size: 9.5px; margin-left: 5px;">INI</span>' : ''}
           </td>
-          <td style="color: var(--text-secondary); font-size: 10.5px;">${escapeHTML(item.label || '-')}</td>
+          <td style="color: var(--text-secondary); font-size: 11px;">${escapeHTML(item.label || '-')}</td>
           <td style="text-align: right;">
-            <button class="action-btn danger" style="padding: 2px 8px; font-size: 9.5px;" onclick="handleDeleteAllowedIp(${Number(item.id)}, '${escapeAttr(item.ip)}')">Hapus</button>
+            <button class="ep-btn danger" onclick="handleDeleteAllowedIp(${Number(item.id)}, '${escapeAttr(item.ip)}', ${isCurrent ? 'true' : 'false'})">Hapus</button>
           </td>
         </tr>
       `;
@@ -250,7 +337,7 @@ async function toggleIpWhitelist() {
     });
     const data = await res.json();
     if (res.ok && data.success) {
-      showToast(newStatus ? 'Batasan IP diaktifkan! Hanya IP terdaftar yang dapat mengakses.' : 'Batasan IP dinonaktifkan.', 'info');
+      showToast(newStatus ? 'Filter IP aktif — hanya IP terdaftar yang bisa akses web.' : 'Filter IP dimatikan — semua IP bisa buka halaman login.', 'info');
       fetchIpWhitelist();
     } else {
       showToast('Gagal mengubah status: ' + (data.error || 'Server error'), 'error');
@@ -304,8 +391,11 @@ async function handleAddAllowedIp(e) {
   }
 }
 
-async function handleDeleteAllowedIp(id, ip) {
-  if (!confirm(`Hapus IP "${ip}" dari daftar izin?`)) return;
+async function handleDeleteAllowedIp(id, ip, isCurrent = false) {
+  const msg = isCurrent && ipWhitelistState.enabled
+    ? `PERINGATAN: "${ip}" adalah IP yang sedang kamu pakai dan Filter IP sedang AKTIF. Menghapusnya akan langsung memblokir akses kamu ke konsol. Yakin lanjut?`
+    : `Hapus IP "${ip}" dari daftar izin?`;
+  if (!confirm(msg)) return;
 
   try {
     const res = await apiFetch(`/api/security/ip-whitelist/${encodeURIComponent(id)}`, {
@@ -437,7 +527,7 @@ async function executeSafetyDelete() {
 function switchTab(tabId) {
   appState.currentTab = tabId;
 
-  const tabs = ['overview', 'machines', 'panduan', 'accounts', 'telemetry'];
+  const tabs = ['overview', 'machines', 'panduan', 'accounts', 'telemetry', 'api'];
   tabs.forEach(t => {
     const btn = document.getElementById(`tabBtn-${t}`);
     const content = document.getElementById(`tabContent-${t}`);
@@ -449,29 +539,77 @@ function switchTab(tabId) {
   if (tabId === 'telemetry' || tabId === 'accounts' || tabId === 'overview') {
     fetchTelemetryData();
   }
+  if (tabId === 'api') {
+    loadApiWorkspace();
+  }
 }
 
 // ================= DATA FETCHING & RECONCILIATION =================
 
-async function fetchDashboardData() {
+function updateLiveSyncBtnUI() {
+  const btn = document.getElementById('liveSyncToggleBtn');
+  const lbl = document.getElementById('liveSyncLabel');
+  if (btn) btn.classList.toggle('is-live', !!appState.liveSyncEnabled);
+  if (lbl) lbl.textContent = appState.liveSyncEnabled ? 'Live' : 'Paused';
+}
+
+function toggleLiveAutoRefresh() {
+  appState.liveSyncEnabled = !appState.liveSyncEnabled;
+  localStorage.setItem('boxd_live_sync', appState.liveSyncEnabled ? '1' : '0');
+  updateLiveSyncBtnUI();
+  if (appState.liveSyncEnabled) {
+    fetchDashboardData({ silent: true });
+    scheduleLiveAutoRefresh();
+    showToast('Auto-refresh live diaktifkan', 'info');
+  } else {
+    stopLiveAutoRefresh();
+    showToast('Auto-refresh dijeda', 'info');
+  }
+}
+
+function stopLiveAutoRefresh() {
+  if (appState.liveSyncTimer) {
+    clearTimeout(appState.liveSyncTimer);
+    appState.liveSyncTimer = null;
+  }
+}
+
+function scheduleLiveAutoRefresh() {
+  stopLiveAutoRefresh();
+  if (!appState.authenticated || !appState.liveSyncEnabled) return;
+  const hasTransitioning = (appState.machines || []).some(m =>
+    ['pending', 'starting', 'stopping', 'migrating', 'resuming', 'waking'].includes(String(m.status || '').toLowerCase())
+  );
+  const delayMs = hasTransitioning ? 5000 : 15000;
+  appState.liveSyncTimer = setTimeout(async () => {
+    if (!document.hidden && appState.authenticated && appState.liveSyncEnabled) {
+      await fetchDashboardData({ silent: true });
+    }
+    scheduleLiveAutoRefresh();
+  }, delayMs);
+}
+
+async function fetchDashboardData(options = {}) {
+  const silent = !!(options && options.silent);
   const syncBtn = document.getElementById('syncTelemetryBtn');
-  if (syncBtn) syncBtn.classList.add('is-spinning');
+  if (syncBtn && !silent) syncBtn.classList.add('is-spinning');
 
   try {
     await Promise.allSettled([
-      fetchAccounts(),
-      fetchMachines(),
+      fetchAccounts({ silent }),
+      fetchMachines({ silent }),
       fetchTelemetryData()
     ]);
     renderOverviewWidgets();
   } finally {
-    if (syncBtn) {
+    if (syncBtn && !silent) {
       setTimeout(() => syncBtn.classList.remove('is-spinning'), 500);
     }
   }
 }
 
-async function fetchAccounts() {
+async function fetchAccounts(options = {}) {
+  const silent = !!(options && options.silent);
   try {
     const res = await apiFetch('/api/accounts');
     const data = await res.json();
@@ -482,16 +620,17 @@ async function fetchAccounts() {
       renderOverviewWidgets();
     }
   } catch (err) {
-    showToast('Gagal memuat akun: ' + err.message, 'error');
+    if (!silent) showToast('Gagal memuat akun: ' + err.message, 'error');
   }
 }
 
-async function fetchMachines() {
+async function fetchMachines(options = {}) {
+  const silent = !!(options && options.silent);
   const grid = document.getElementById('machinesGrid');
   const emptyState = document.getElementById('emptyMachinesState');
 
-  if (emptyState) emptyState.classList.add('hidden');
-  if (grid) {
+  if (emptyState && !silent) emptyState.classList.add('hidden');
+  if (grid && !silent && !appState.machinesLoaded) {
     grid.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 24px; text-align: center; color: var(--text-dim); font-family: var(--font-mono); font-size: 12px;">
         Memuat daftar microVM...
@@ -506,17 +645,17 @@ async function fetchMachines() {
 
     appState.machinesLoaded = true;
     if (data.success) {
-      appState.machines = data.machines || [];
+      appState.machines = (data.machines || []).filter(m => m.accessible !== false);
       renderMachines();
       updateMachineStats();
     } else {
-      if (grid) grid.innerHTML = '';
-      showToast('Gagal memuat mesin: ' + data.error, 'error');
+      if (grid && !silent) grid.innerHTML = '';
+      if (!silent) showToast('Gagal memuat mesin: ' + data.error, 'error');
     }
   } catch (err) {
     appState.machinesLoaded = true;
-    if (grid) grid.innerHTML = '';
-    showToast('Gagal memuat mesin: ' + err.message, 'error');
+    if (grid && !silent) grid.innerHTML = '';
+    if (!silent) showToast('Gagal memuat mesin: ' + err.message, 'error');
   }
 }
 
@@ -597,10 +736,11 @@ function onGlobalSearch() {
   appState.searchQuery = input.value.toLowerCase().trim();
   renderOverviewWidgets();
   renderMachines();
+  renderAccountsHub();
 }
 
 function getFilteredMachinesList(applyStatusFilter = true) {
-  let list = appState.machines || [];
+  let list = (appState.machines || []).filter(m => m.accessible !== false);
 
   if (applyStatusFilter && appState.statusFilter !== 'all') {
     list = list.filter(m => {
@@ -608,7 +748,6 @@ function getFilteredMachinesList(applyStatusFilter = true) {
       if (appState.statusFilter === 'hibernated') return m.status === 'hibernated';
       if (appState.statusFilter === 'suspended') return ['suspended', 'paused'].includes(m.status);
       if (appState.statusFilter === 'stopped') return ['stopped', 'failed'].includes(m.status);
-      if (appState.statusFilter === 'private') return !m.accessible;
       return true;
     });
   }
@@ -626,8 +765,27 @@ function getFilteredMachinesList(applyStatusFilter = true) {
   return list;
 }
 
+function openMachinesWithFilter(statusVal = 'all') {
+  const filterEl = document.getElementById('statusFilter');
+  const nextFilter = statusVal || 'all';
+  if (filterEl) filterEl.value = nextFilter;
+  appState.statusFilter = nextFilter;
+  switchTab('machines');
+  renderMachines();
+}
+
+function toggleOverviewAccountFilter(accountId) {
+  const nextId = appState.selectedAccountId === accountId ? 'all' : accountId;
+  const filterSelect = document.getElementById('accountFilter');
+  if (filterSelect) filterSelect.value = nextId;
+  appState.selectedAccountId = nextId;
+  fetchMachines();
+  renderOverviewWidgets();
+  renderTelemetryView();
+}
+
 function renderOverviewWidgets() {
-  const machines = appState.machines || [];
+  const machines = (appState.machines || []).filter(m => m.accessible !== false);
   const accounts = appState.accounts || [];
   const telemetry = appState.telemetry || {};
   const telemetryAccounts = telemetry.accounts || [];
@@ -642,16 +800,39 @@ function renderOverviewWidgets() {
     ? telemetryAccounts
     : telemetryAccounts.filter(t => t.account && t.account.id === selectedAccId);
 
-  // 1. Machine & Resource metrics
+  // 1. Machine & Resource metrics (controllable VMs only)
   const totalVms = machines.length;
-  const controllableVms = machines.filter(m => m.accessible).length;
-  const privateVms = machines.filter(m => !m.accessible).length;
 
   let totalAllocatedVcpu = 0;
   let totalAllocatedRamBytes = 0;
+  let runningCount = 0;
+  let standbyCount = 0;
+  let hibernatedCount = 0;
+  let stoppedCount = 0;
+  let alwaysOnCount = 0;
+  let sshPassCount = 0;
+  let nonStoppedCount = 0;
+  let autoUpdReadyCount = 0;
+  const regionCounts = new Map();
+
   machines.forEach(m => {
     totalAllocatedVcpu += (m.resources && m.resources.vcpu) || 0;
     totalAllocatedRamBytes += (m.resources && m.resources.memoryBytes) || 0;
+
+    if (m.status === 'running') runningCount++;
+    else if (['suspended', 'paused'].includes(m.status)) standbyCount++;
+    else if (m.status === 'hibernated') hibernatedCount++;
+    else stoppedCount++;
+
+    if (m.status !== 'stopped' && m.status !== 'failed') {
+      nonStoppedCount++;
+      if (m.vmConfig && m.vmConfig.autoUpdateEnabled) autoUpdReadyCount++;
+    }
+    if (m.alwaysOn) alwaysOnCount++;
+    if (m.sshAccess && m.sshAccess.enabled) sshPassCount++;
+
+    const reg = String(m.region || 'fra').toUpperCase();
+    regionCounts.set(reg, (regionCounts.get(reg) || 0) + 1);
   });
   const totalRamGb = Math.round(totalAllocatedRamBytes / (1024 * 1024 * 1024));
 
@@ -689,21 +870,17 @@ function renderOverviewWidgets() {
 
   const elSyncMeta = document.getElementById('overviewSyncMeta');
   if (elSyncMeta) {
-    if (totalVms > 0) {
-      elSyncMeta.textContent = privateVms > 0
-        ? `${controllableVms} Shared · ${privateVms} Private`
-        : `${controllableVms} VM Aktif`;
-    } else {
-      elSyncMeta.textContent = '';
-    }
+    elSyncMeta.textContent = appState.machinesLoaded
+      ? `${totalVms} VM · ${scopedAccounts.length} Akun`
+      : `${scopedAccounts.length} Akun`;
   }
 
   // Update KPI Cards
   const elQuota = document.getElementById('overviewStatQuota');
-  if (elQuota) elQuota.textContent = `${quotaCap} VM`;
+  if (elQuota) elQuota.textContent = appState.machinesLoaded ? `${totalVms} / ${quotaCap}` : `${quotaCap} VM`;
 
   const elQuotaBadge = document.getElementById('overviewStatQuotaBadge');
-  if (elQuotaBadge) elQuotaBadge.textContent = appState.machinesLoaded ? `${totalVms} Terpakai` : 'Memuat...';
+  if (elQuotaBadge) elQuotaBadge.textContent = appState.machinesLoaded ? 'VM terkelola' : 'Memuat…';
 
   const elVcpu = document.getElementById('overviewStatVcpu');
   if (elVcpu) elVcpu.textContent = appState.machinesLoaded ? `${totalAllocatedVcpu} vCPU` : '—';
@@ -715,7 +892,7 @@ function renderOverviewWidgets() {
   if (elBalance) elBalance.textContent = `$${totalBalance.toFixed(2)}`;
 
   const elAccBadge = document.getElementById('overviewStatAccBadge');
-  if (elAccBadge) elAccBadge.textContent = `${scopedAccounts.length} Akun`;
+  if (elAccBadge) elAccBadge.textContent = `${scopedAccounts.length} akun`;
 
   const elSpend = document.getElementById('overviewStatSpend');
   if (elSpend) {
@@ -724,40 +901,147 @@ function renderOverviewWidgets() {
       : `$${totalExpenditure.toFixed(2)}`;
   }
 
-  updateScopeNotices(privateVms);
-
-  // 4. Overview Machines List (respecting search query!)
-  const overviewList = document.getElementById('overviewMachinesList');
-  if (overviewList) {
-    const filtered = getFilteredMachinesList(false);
+  // 4. Overview Fleet Status Summary (No individual instance list)
+  const fleetBody = document.getElementById('overviewFleetStatusBody');
+  if (fleetBody) {
     if (!appState.machinesLoaded && machines.length === 0) {
-      overviewList.innerHTML = `<div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">Memuat data fleet...</div>`;
-    } else if (machines.length === 0) {
-      overviewList.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 12px; font-weight: 700;">Belum ada microVM. Buka tab Machines untuk deploy VM baru.</div>`;
-    } else if (filtered.length === 0) {
-      overviewList.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 12px; font-weight: 700;">Tidak ada VM yang cocok dengan "${escapeHTML(appState.searchQuery)}".</div>`;
+      fleetBody.innerHTML = `<div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">Memuat ringkasan fleet…</div>`;
     } else {
-      overviewList.innerHTML = `<div class="machines-grid">${filtered.map((m, idx) => createMachineCardHTML(m, idx)).join('')}</div>`;
+      const regionBreakdown = regionCounts.size > 0
+        ? Array.from(regionCounts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([r, c]) => `${escapeHTML(r)} (${c})`).join(' · ')
+        : '—';
+
+      let autoUpdPill = `<span class="status-pill status-neutral font-mono">—</span>`;
+      if (nonStoppedCount > 0) {
+        const cls = autoUpdReadyCount === nonStoppedCount ? 'status-green' : 'status-amber';
+        autoUpdPill = `<span class="status-pill ${cls} font-mono">${autoUpdReadyCount} / ${nonStoppedCount} VM siap</span>`;
+      }
+
+      fleetBody.innerHTML = `
+        <div class="ov-status-grid">
+          <button type="button" class="ov-status-tile is-green ${runningCount > 0 ? 'is-nonzero' : ''}" onclick="openMachinesWithFilter('running')">
+            <span class="ov-status-label">Running</span>
+            <span class="ov-status-count font-mono">${runningCount}</span>
+          </button>
+          <button type="button" class="ov-status-tile is-amber ${standbyCount > 0 ? 'is-nonzero' : ''}" onclick="openMachinesWithFilter('suspended')">
+            <span class="ov-status-label">Standby</span>
+            <span class="ov-status-count font-mono">${standbyCount}</span>
+          </button>
+          <button type="button" class="ov-status-tile ${hibernatedCount > 0 ? 'is-nonzero' : ''}" onclick="openMachinesWithFilter('hibernated')">
+            <span class="ov-status-label">Hibernated</span>
+            <span class="ov-status-count font-mono">${hibernatedCount}</span>
+          </button>
+          <button type="button" class="ov-status-tile ${stoppedCount > 0 ? 'is-nonzero' : ''}" onclick="openMachinesWithFilter('stopped')">
+            <span class="ov-status-label">Stopped</span>
+            <span class="ov-status-count font-mono">${stoppedCount}</span>
+          </button>
+        </div>
+
+        <div class="ov-kv-list">
+          <div class="ov-kv-row">
+            <span class="ov-kv-key">Auto-Update &amp; APT</span>
+            <span class="ov-kv-val">${autoUpdPill}</span>
+          </div>
+          <div class="ov-kv-row">
+            <span class="ov-kv-key">Mode Always-On</span>
+            <span class="ov-kv-val font-mono">${totalVms > 0 ? `${alwaysOnCount} / ${totalVms} VM` : '—'}</span>
+          </div>
+          <div class="ov-kv-row">
+            <span class="ov-kv-key">SSH Password</span>
+            <span class="ov-kv-val font-mono">${totalVms > 0 ? `${sshPassCount} / ${totalVms} VM` : '—'}</span>
+          </div>
+          <div class="ov-kv-row">
+            <span class="ov-kv-key">Distribusi Region</span>
+            <span class="ov-kv-val font-mono">${regionBreakdown}</span>
+          </div>
+        </div>
+
+        <div class="ov-card-actions">
+          <button type="button" class="btn-stark-cta btn-sm-cta" onclick="openNewMachineModal()">+ Deploy VM</button>
+          <button type="button" class="action-btn" onclick="openMachinesWithFilter('all')">Buka Machines →</button>
+          <button type="button" class="action-btn" onclick="switchTab('panduan')">Panduan</button>
+        </div>
+      `;
     }
   }
-}
 
-function updateScopeNotices(privateCount) {
-  const html = privateCount > 0
-    ? `🔒 <strong>${privateCount} VM private read-only:</strong> API key tipe ORG tidak bisa mengontrol VM private. Pakai Member Key atau aktifkan <em>Share with Org</em> saat deploy.`
-    : '';
+  // 5. Overview Accounts Summary
+  const accSummaryBody = document.getElementById('overviewAccountsSummaryBody');
+  if (accSummaryBody) {
+    const rawItems = scopedTelemetry.length > 0
+      ? scopedTelemetry
+      : scopedAccounts.map(a => ({
+          account: {
+            id: a.id,
+            label: a.label,
+            homeRegion: a.home_region || 'fra',
+            status: a.status
+          },
+          billing: { balance: (a.balance_micro || 0) / 1e6 },
+          usage: { totalCost: 0 },
+          error: a.last_error || null
+        }));
 
-  ['overviewScopeNotice', 'machinesScopeNotice'].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (privateCount > 0) {
-      el.className = 'scope-banner';
-      el.innerHTML = html;
+    const q = appState.searchQuery || '';
+    const filteredItems = q
+      ? rawItems.filter(item => {
+          const acc = item.account || {};
+          return (acc.label && acc.label.toLowerCase().includes(q)) ||
+                 (acc.homeRegion && acc.homeRegion.toLowerCase().includes(q));
+        })
+      : rawItems;
+
+    if (rawItems.length === 0) {
+      accSummaryBody.innerHTML = `<div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px;">Belum ada akun terhubung.</div>`;
+    } else if (filteredItems.length === 0) {
+      accSummaryBody.innerHTML = `<div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px;">Tidak ada akun yang cocok dengan "${escapeHTML(q)}".</div>`;
     } else {
-      el.className = 'hidden';
-      el.innerHTML = '';
+      const activeAccCount = rawItems.filter(item => !item.error && item.account && item.account.status !== 'invalid' && item.account.status !== 'error').length;
+      const rowsHtml = filteredItems.map(item => {
+        const acc = item.account || {};
+        const bal = item.billing && typeof item.billing.balance === 'number' ? item.billing.balance : 0;
+        const cost = item.usage && typeof item.usage.totalCost === 'number' ? item.usage.totalCost : 0;
+        const costText = cost > 0 && cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`;
+        const region = String(acc.homeRegion || 'fra').toUpperCase();
+        const hasError = !!item.error || acc.status === 'invalid' || acc.status === 'error';
+        const isSelected = appState.selectedAccountId === acc.id;
+        const safeId = escapeAttr(acc.id);
+
+        return `
+          <tr class="ov-acc-row ${isSelected ? 'is-selected' : ''}" onclick="toggleOverviewAccountFilter('${safeId}')" title="Klik untuk filter akun ini">
+            <td>
+              <div class="ov-acc-name-wrap">
+                <span class="ov-acc-name">${escapeHTML(acc.label || '-')}</span>
+                <span class="ov-acc-region font-mono">${escapeHTML(region)}</span>
+                ${hasError ? `<span class="status-pill status-rose font-mono" style="font-size: 9px; padding: 1px 5px;">ERR</span>` : ''}
+              </div>
+            </td>
+            <td class="num font-mono text-emerald" style="font-weight: 800;">$${bal.toFixed(2)}</td>
+            <td class="num font-mono text-muted">${costText}</td>
+          </tr>
+        `;
+      }).join('');
+
+      accSummaryBody.innerHTML = `
+        <div class="ov-acc-table-wrap">
+          <table class="ov-acc-table">
+            <thead>
+              <tr>
+                <th>Akun</th>
+                <th class="num">Saldo</th>
+                <th class="num">Terpakai</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+        <div class="ov-card-footer">
+          <span class="ov-card-footer-meta font-mono">${activeAccCount} / ${rawItems.length} akun aktif</span>
+          <button type="button" class="action-btn" onclick="openAddAccountModal()">+ Tambah Akun</button>
+        </div>
+      `;
     }
-  });
+  }
 }
 
 // ================= RENDERING =================
@@ -782,7 +1066,8 @@ function renderAccountSelectors() {
 
     const vmOpt = document.createElement('option');
     vmOpt.value = acc.id;
-    vmOpt.textContent = `${acc.label} (${acc.masked_key})${scopeTag}`;
+    const cleanMask = String(acc.masked_key || '').replace(/\s*\.\.\.\s*/g, '…');
+    vmOpt.textContent = `${acc.label} · ${cleanMask}${scopeTag}`;
     vmSelect.appendChild(vmOpt);
   });
 
@@ -819,6 +1104,7 @@ function renderMachines() {
   const emptyState = document.getElementById('emptyMachinesState');
   if (!grid || !emptyState) return;
 
+  updateFleetAutoUpdateBanner();
   const list = getFilteredMachinesList(true);
 
   if (list.length === 0) {
@@ -828,132 +1114,216 @@ function renderMachines() {
   }
 
   emptyState.classList.add('hidden');
-  grid.innerHTML = list.map((m, idx) => createMachineCardHTML(m, idx)).join('');
+  grid.innerHTML = renderMachineCollectionsHTML(list);
 }
 
-function createMachineCardHTML(m) {
-  const isAccessible = m.accessible !== false;
+function updateFleetAutoUpdateBanner() {
+  const banner = document.getElementById('machinesAutoUpdateBanner');
+  const countEl = document.getElementById('fleetAutoUpdPendingCount');
+  if (!banner || !countEl) return;
+
+  const controllable = (appState.machines || []).filter(m => m.accessible !== false && m.status !== 'stopped');
+  const pending = controllable.filter(m => !(m.vmConfig && m.vmConfig.autoUpdateEnabled));
+  if (pending.length > 0) {
+    countEl.textContent = String(pending.length);
+    banner.classList.remove('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
+}
+
+async function handleBatchPrepareAutoUpdate(runUpgrade = false) {
+  const prepBtn = document.getElementById('fleetPrepareAutoUpdBtn');
+  const upgBtn = document.getElementById('fleetUpgradeAllBtn');
+  const prevPrep = prepBtn ? prepBtn.textContent : '';
+  const prevUpg = upgBtn ? upgBtn.textContent : '';
+  if (prepBtn) {
+    prepBtn.disabled = true;
+    prepBtn.textContent = runUpgrade ? 'Memproses...' : 'Mengaktifkan...';
+  }
+  if (upgBtn) upgBtn.disabled = true;
+
+  showToast(runUpgrade ? 'Menyiapkan Auto-Update & Upgrade OS semua VM aktif/standby...' : 'Mengaktifkan Auto-Update & mengisi cache APT semua VM...', 'info');
+
+  try {
+    const res = await apiFetch('/api/machines/autoupdate-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: appState.selectedAccountId || 'all',
+        runUpgrade: !!runUpgrade,
+        wakeStandby: true,
+        intervalHours: 12,
+        updateRuntimes: true
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      const msg = runUpgrade
+        ? `${data.configured} VM diaktifkan Auto-Update & ${data.upgradedJobs} upgrade OS berjalan!`
+        : `${data.configured} VM siap pakai (Auto-Update & cache APT aktif)!`;
+      showToast(data.failed > 0 ? `${msg} (${data.failed} gagal)` : msg, data.failed > 0 ? 'error' : 'success');
+      await fetchDashboardData({ silent: true });
+    } else {
+      showToast(`Gagal menyiapkan semua VM: ${data.error || 'Error'}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    if (prepBtn) {
+      prepBtn.disabled = false;
+      prepBtn.textContent = prevPrep || '⚡ Aktifkan Auto-Update Semua';
+    }
+    if (upgBtn) {
+      upgBtn.disabled = false;
+      upgBtn.textContent = prevUpg || '+ Upgrade OS Semua';
+    }
+  }
+}
+
+function renderMachineCollectionsHTML(list) {
+  const controllable = list.filter(m => m.accessible !== false);
+
+  let html = '';
+  if (controllable.length > 0) {
+    const showDeployCue = !appState.searchQuery && appState.statusFilter === 'all';
+    const isBanner = controllable.length % 3 === 0;
+    const ghostCard = showDeployCue && !isBanner ? `
+      <button type="button" class="machine-deploy-ghost" onclick="openNewMachineModal()">
+        <span class="ghost-plus">+</span>
+        <span class="ghost-title">Deploy MicroVM Baru</span>
+        <span class="ghost-sub font-mono">Ubuntu 24.04 · Auto-Update &amp; SSH siap pakai</span>
+      </button>
+    ` : '';
+    const ghostBanner = showDeployCue && isBanner ? `
+      <button type="button" class="machine-deploy-ghost is-banner" onclick="openNewMachineModal()">
+        <span class="ghost-plus">+</span>
+        <span class="ghost-banner-copy">
+          <span class="ghost-title">Deploy MicroVM Baru</span>
+          <span class="ghost-sub font-mono">Ubuntu 24.04 · Auto-Update &amp; SSH siap pakai</span>
+        </span>
+      </button>
+    ` : '';
+    html += `<div class="machines-grid">${controllable.map(m => createMachineCardHTML(m)).join('')}${ghostCard}</div>${ghostBanner}`;
+  }
+  return html;
+}
+
+function getMachineStatusInfo(m) {
   const isRunning = m.status === 'running';
   const isSuspended = ['suspended', 'paused'].includes(m.status);
   const isHibernated = m.status === 'hibernated';
   const isRemote = m.status === 'remote';
+
+  if (isRunning) return { statusText: 'RUNNING', badgeClass: 'status-green' };
+  if (isSuspended) return { statusText: 'STANDBY', badgeClass: 'status-amber' };
+  if (isHibernated) return { statusText: 'HIBERNATED', badgeClass: 'status-neutral' };
+  if (isRemote) return { statusText: 'ACTIVE', badgeClass: 'status-sky' };
+  return { statusText: 'STOPPED', badgeClass: 'status-neutral' };
+}
+
+function createMachineCardHTML(m) {
+  if (m.accessible === false) return '';
+
+  const isRunning = m.status === 'running';
+  const isSuspended = ['suspended', 'paused'].includes(m.status);
+  const isHibernated = m.status === 'hibernated';
   const region = (m.region || 'fra').toUpperCase();
-
-  let statusClass = 'stopped';
-  let statusText = 'STOPPED';
-  let badgeClass = 'status-neutral';
-
-  if (isRunning) {
-    statusClass = 'running';
-    statusText = 'RUNNING';
-    badgeClass = 'status-green';
-  } else if (isSuspended) {
-    statusClass = 'suspended';
-    statusText = 'STANDBY';
-    badgeClass = 'status-amber';
-  } else if (isHibernated) {
-    statusClass = 'hibernated';
-    statusText = 'HIBERNATED';
-    badgeClass = 'status-neutral';
-  } else if (isRemote) {
-    statusClass = 'remote';
-    statusText = 'ACTIVE';
-    badgeClass = 'status-sky';
-  }
+  const { statusText, badgeClass } = getMachineStatusInfo(m);
 
   const domain = (m.access && m.access.domain) || `${region.toLowerCase()}.boxd.sh`;
   const sshPort = m.access ? m.access.sshPort : null;
-  const sshCmd = sshPort ? `ssh -p ${sshPort} root@${domain}` : `boxd machine ssh ${m.name}`;
+  const sshAccess = m.sshAccess || null;
+  const hasSshPass = !!(sshAccess && sshAccess.enabled && sshAccess.publicPort && sshAccess.dns);
+  const primarySshUser = hasSshPass ? (sshAccess.sshUser === 'boxd' ? 'boxd' : 'root') : 'boxd';
+  const sshCmd = hasSshPass
+    ? `ssh -p ${sshAccess.publicPort} ${primarySshUser}@${sshAccess.dns}`
+    : (sshPort ? `ssh -p ${sshPort} boxd@${domain}` : `boxd machine ssh ${m.name}`);
   const url = (m.access && m.access.url) || `https://${m.name}.${domain}`;
   const vcpu = (m.resources && m.resources.vcpu) || 1;
   const memHuman = (m.resources && m.resources.memoryHuman) || '4 GB';
-  const scopeLabel = m.shared ? 'SHARED' : 'PRIVATE';
-  const costText = m.cost > 0 ? `$${m.cost >= 0.01 ? m.cost.toFixed(2) : m.cost.toFixed(4)}` : '';
-  const costChip = costText ? `<span class="mc-cost-inline font-mono">${costText}</span>` : '';
+  const rawCost = typeof m.cost === 'number' ? m.cost : 0;
+  const costText = rawCost >= 0.01 ? `$${rawCost.toFixed(2)}` : rawCost > 0 ? `$${rawCost.toFixed(4)}` : '$0.00';
+  const costChip = `<span class="mc-cost-inline font-mono">${costText}</span>`;
 
   const safeAccId = escapeAttr(m.accountId);
   const safeId = escapeAttr(m.id);
   const safeName = escapeAttr(m.name);
   const safeLabel = escapeAttr(m.accountLabel);
   const safeRegion = escapeAttr(m.region || 'fra');
+  const keySvg = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>`;
+  const isAlwaysOn = !!m.alwaysOn;
+  const isAutoUpd = !!(m.vmConfig && m.vmConfig.autoUpdateEnabled);
+  const modeChips = [
+    isAlwaysOn ? `<span class="mc-mode-chip is-always-on" title="Auto-Suspend & Hibernate Nonaktif">ALWAYS-ON</span>` : '',
+    isAutoUpd ? `<span class="mc-mode-chip is-autoupd" title="Auto-Update Terjadwal Aktif">AUTO-UPD</span>` : ''
+  ].filter(Boolean).join('');
 
   return `
-    <div class="machine-card ${isAccessible ? 'is-ctrl' : 'is-readonly'}" id="card-${escapeHTML(m.id)}">
+    <div class="machine-card is-ctrl" id="card-${escapeHTML(m.id)}">
       <div class="mc-top">
         <div class="mc-title-area">
-          <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
-            <span class="status-indicator ${statusClass}"></span>
-            <span class="mc-name font-mono">${escapeHTML(m.name)}</span>
-          </div>
+          <span class="mc-name font-mono">${escapeHTML(m.name)}</span>
           <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
             ${costChip}
             <span class="status-pill ${badgeClass} font-mono">${escapeHTML(statusText)}</span>
           </div>
         </div>
-        <div class="mc-specs-row">
-          <span class="spec-pill spec-acc" title="${escapeHTML(m.accountLabel)}">${escapeHTML(m.accountLabel)}</span>
-          <span class="spec-pill font-mono">${escapeHTML(region)}</span>
-          <span class="spec-pill font-mono">${scopeLabel}</span>
-          <span class="spec-pill font-mono">${vcpu} vCPU · ${escapeHTML(memHuman)}</span>
+        <div class="mc-meta-line font-mono">
+          <span class="mc-meta-text"><span class="mc-acc-label" title="${escapeHTML(m.accountLabel)}">${escapeHTML(m.accountLabel)}</span> <span class="nowrap-spec">· ${escapeHTML(region)} · ${vcpu} vCPU · ${escapeHTML(memHuman)}</span></span>
+          ${modeChips ? `<span class="mc-meta-chips">${modeChips}</span>` : ''}
         </div>
       </div>
 
-      ${isAccessible ? `
-        <div class="mc-endpoints">
-          <div class="endpoint-item" onclick="copyToClipboard('${escapeAttr(sshCmd)}', 'SSH disalin')">
-            <span class="endpoint-protocol">SSH</span>
-            <span class="endpoint-value font-mono">${escapeHTML(sshCmd)}</span>
-            <span class="ep-btn tag-blue">Copy</span>
+      <div class="mc-endpoints">
+        <div class="endpoint-item endpoint-item-ssh ${hasSshPass ? 'has-pass' : ''}">
+          <span class="endpoint-protocol">SSH</span>
+          <span class="endpoint-value font-mono" style="cursor: pointer;" onclick="${hasSshPass ? `copyToClipboard('${escapeAttr(sshCmd)}', 'SSH disalin')` : `openSshPasswordModal('${safeAccId}', '${safeId}', '${safeName}', '${safeLabel}', '${safeRegion}')`}" title="${escapeHTML(hasSshPass ? sshCmd : 'Klik Set Pass untuk atur password SSH (port 22)')}">${escapeHTML(hasSshPass ? sshCmd : `root@${m.name}.boxd.sh`)}</span>
+          <div class="ep-actions">
+            <button type="button" class="ep-btn ep-btn-pass ${hasSshPass ? 'is-active' : 'needs-setup'}" onclick="openSshPasswordModal('${safeAccId}', '${safeId}', '${safeName}', '${safeLabel}', '${safeRegion}')" title="Atur Password SSH">${keySvg}<span>${hasSshPass ? 'Pass' : 'Set Pass'}</span></button>
+            ${hasSshPass ? `<button type="button" class="ep-btn" onclick="copyToClipboard('${escapeAttr(sshCmd)}', 'SSH disalin')">Copy</button>` : `<button type="button" class="ep-btn" onclick="copyToClipboard('${escapeAttr(sshCmd)}', 'SSH key command disalin')" title="Copy perintah SSH Key Boxd">SSH Key</button>`}
           </div>
+        </div>
 
+        <div class="endpoint-item">
+          <span class="endpoint-protocol">WEB</span>
+          <a href="${escapeHTML(url)}" target="_blank" rel="noopener" class="endpoint-link">
+            <span class="endpoint-value font-mono">${escapeHTML(m.name)}.${escapeHTML(domain)}</span>
+          </a>
+          <a href="${escapeHTML(url)}" target="_blank" rel="noopener" class="ep-btn">Visit ↗</a>
+        </div>
+
+        ${m.access && m.access.desktopUrl ? `
           <div class="endpoint-item">
-            <span class="endpoint-protocol">WEB</span>
-            <a href="${escapeHTML(url)}" target="_blank" rel="noopener" class="endpoint-link">
-              <span class="endpoint-value font-mono">${escapeHTML(m.name)}.${escapeHTML(domain)}</span>
+            <span class="endpoint-protocol">GUI</span>
+            <a href="${escapeHTML(m.access.desktopUrl)}" target="_blank" rel="noopener" class="endpoint-link">
+              <span class="endpoint-value font-mono">Desktop Web Shell</span>
             </a>
-            <a href="${escapeHTML(url)}" target="_blank" rel="noopener" class="ep-btn tag-amber">Visit ↗</a>
+            <a href="${escapeHTML(m.access.desktopUrl)}" target="_blank" rel="noopener" class="ep-btn">Open ↗</a>
           </div>
+        ` : ''}
+      </div>
 
-          ${m.access && m.access.desktopUrl ? `
-            <div class="endpoint-item">
-              <span class="endpoint-protocol">GUI</span>
-              <a href="${escapeHTML(m.access.desktopUrl)}" target="_blank" rel="noopener" class="endpoint-link">
-                <span class="endpoint-value font-mono">Desktop Web Shell</span>
-              </a>
-              <a href="${escapeHTML(m.access.desktopUrl)}" target="_blank" rel="noopener" class="ep-btn tag-blue">Open ↗</a>
-            </div>
-          ` : ''}
+      <div class="mc-bottom">
+        <div class="mc-actions-left">
+          ${isRunning ? `
+            <button class="action-btn" onclick="doMachineAction('${safeAccId}', '${safeId}', 'pause', '${safeRegion}')">Pause</button>
+            <button class="action-btn" onclick="doMachineAction('${safeAccId}', '${safeId}', 'hibernate', '${safeRegion}')">Hibernate</button>
+          ` : `
+            <button class="action-btn start-ready" onclick="doMachineAction('${safeAccId}', '${safeId}', '${isSuspended ? 'resume' : isHibernated ? 'wake' : 'start'}', '${safeRegion}')">▶ Start</button>
+          `}
+          <button class="action-btn" onclick="openExecModal('${safeAccId}', '${safeId}', '${safeName}', '${safeLabel}', '${safeRegion}')">&gt;_ Console</button>
+          <button class="action-btn" onclick="openVmManageModal('${safeAccId}', '${safeId}', '${safeName}', '${safeLabel}', '${safeRegion}')">Kelola</button>
         </div>
-
-        <div class="mc-bottom">
-          <div class="mc-actions-left">
-            ${isRunning ? `
-              <button class="action-btn" onclick="doMachineAction('${safeAccId}', '${safeId}', 'pause', '${safeRegion}')">⏸ Pause</button>
-              <button class="action-btn" onclick="doMachineAction('${safeAccId}', '${safeId}', 'hibernate', '${safeRegion}')">❄ Hibernate</button>
-            ` : `
-              <button class="action-btn primary" onclick="doMachineAction('${safeAccId}', '${safeId}', '${isSuspended ? 'resume' : isHibernated ? 'wake' : 'start'}', '${safeRegion}')">▶ Start</button>
-            `}
-            <button class="action-btn" onclick="openExecModal('${safeAccId}', '${safeId}', '${safeName}', '${safeLabel}', '${safeRegion}')">&gt;_ Console</button>
-          </div>
-          <button class="action-btn danger" onclick="confirmDeleteMachine('${safeAccId}', '${safeId}', '${safeName}', '${safeRegion}')">✕ Delete</button>
-        </div>
-      ` : `
-        <div class="mc-bottom mc-readonly-bar">
-          <span class="mc-readonly-tag font-mono">🔒 Read-only · ORG Key</span>
-          <button class="btn-mc-action" onclick="selectAndFilterAccount('${safeAccId}')">Akun →</button>
-        </div>
-      `}
+        <button class="action-btn danger" onclick="confirmDeleteMachine('${safeAccId}', '${safeId}', '${safeName}', '${safeRegion}')">Hapus</button>
+      </div>
     </div>
   `;
 }
 
 // ================= RENDER MULTI-ACCOUNT HUB =================
 
-let accountSearchQuery = '';
-
 function filterAccountsHub() {
-  const input = document.getElementById('accountSearchInput');
-  accountSearchQuery = input ? input.value.toLowerCase().trim() : '';
   renderAccountsHub();
 }
 
@@ -989,16 +1359,17 @@ function renderAccountsHub() {
     return;
   }
 
+  const query = appState.searchQuery || '';
   let list = sourceList;
-  if (accountSearchQuery) {
+  if (query) {
     list = list.filter(item => {
       const acc = item.account || {};
       const org = item.org || {};
-      return (acc.label && acc.label.toLowerCase().includes(accountSearchQuery)) ||
-             (acc.displayName && acc.displayName.toLowerCase().includes(accountSearchQuery)) ||
-             (acc.userId && acc.userId.toLowerCase().includes(accountSearchQuery)) ||
-             (acc.maskedKey && acc.maskedKey.toLowerCase().includes(accountSearchQuery)) ||
-             (org.name && org.name.toLowerCase().includes(accountSearchQuery));
+      return (acc.label && acc.label.toLowerCase().includes(query)) ||
+             (acc.displayName && acc.displayName.toLowerCase().includes(query)) ||
+             (acc.userId && acc.userId.toLowerCase().includes(query)) ||
+             (acc.maskedKey && acc.maskedKey.toLowerCase().includes(query)) ||
+             (org.name && org.name.toLowerCase().includes(query));
     });
   }
 
@@ -1009,10 +1380,9 @@ function renderAccountsHub() {
 
   container.innerHTML = list.map((item) => {
     const acc = item.account || {};
-    const org = item.org || {};
     const billing = item.billing || {};
     const usage = item.usage || {};
-    const machinesCount = item.machinesCount || 0;
+    const machinesCount = item.controllableCount !== undefined ? item.controllableCount : (item.machinesCount || 0);
     const maxVms = acc.maxVms || 100;
     const quotaPct = maxVms > 0 ? Math.min(100, Math.round((machinesCount / maxVms) * 100)) : 0;
 
@@ -1022,15 +1392,9 @@ function renderAccountsHub() {
     const totalCostFormatted = costVal > 0 && costVal < 0.01 ? costVal.toFixed(4) : costVal.toFixed(2);
 
     const hasError = !!item.error || acc.status === 'invalid' || acc.status === 'error';
-    const statusClass = hasError ? 'status-rose' : 'status-green';
-    const statusText = hasError ? (acc.status === 'invalid' ? 'INVALID' : 'ERROR') : 'AKTIF';
-
+    const statusText = acc.status === 'invalid' ? 'INVALID' : 'ERROR';
     const scope = (acc.keyScope || 'unknown').toUpperCase();
-    const scopeBadge = scope === 'ORG'
-      ? `<span class="status-pill status-amber font-mono">ORG</span>`
-      : scope === 'MEMBER'
-      ? `<span class="status-pill status-sky font-mono">MEMBER</span>`
-      : '';
+    const scopeText = scope === 'ORG' || scope === 'MEMBER' ? `${scope} · ` : '';
 
     const regionsStr = Array.isArray(acc.enabledRegions) && acc.enabledRegions.length > 0
       ? acc.enabledRegions.map(r => r.toUpperCase()).join(', ')
@@ -1039,24 +1403,22 @@ function renderAccountsHub() {
     const safeId = escapeAttr(acc.id);
     const safeLabel = escapeAttr(acc.label);
 
-    const metaLine = `${acc.displayName || acc.userId || '-'} · ${acc.maskedKey || ''} · ${regionsStr}`;
+    const cleanMask = String(acc.maskedKey || '').replace(/\s*\.\.\.\s*/g, '…');
+    const metaLine = `${acc.displayName || acc.userId || '-'} · ${scopeText}${cleanMask} · ${regionsStr}`;
 
     return `
-      <div class="account-card">
+      <div class="account-card ${hasError ? 'has-error' : ''}">
         <div class="acc-card-top">
           <div style="min-width: 0; flex: 1;">
             <div class="acc-label">${escapeHTML(acc.label)}</div>
             <div class="acc-user-id font-mono" title="${escapeAttr(metaLine)}">${escapeHTML(metaLine)}</div>
           </div>
-          <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
-            ${scopeBadge}
-            <span class="status-pill ${statusClass} font-mono">${statusText}</span>
-          </div>
+          ${hasError ? `<span class="status-pill status-rose font-mono">${statusText}</span>` : ''}
         </div>
 
         ${hasError ? `
           <div class="mc-lock-notice" style="border-color: #F43F5E; color: var(--text-primary); background-color: rgba(244, 63, 94, 0.1);">
-            ⚠️ ${escapeHTML(item.error || acc.lastError || 'Gagal sinkronisasi akun')}
+            ${escapeHTML(item.error || acc.lastError || 'Gagal sinkronisasi akun')}
           </div>
         ` : ''}
 
@@ -1143,50 +1505,53 @@ function renderTelemetryView() {
   }
 
   const tbody = document.getElementById('telemetryTableBody');
+  const countMeta = document.getElementById('telemRowCountMeta');
   if (!tbody) return;
 
   const rows = [];
   scopedAccounts.forEach(accItem => {
     if (accItem.usage && Array.isArray(accItem.usage.machines)) {
       accItem.usage.machines.forEach(m => {
+        if (!m.accessible && !m.shared) return;
         const hours = (m.runningSeconds / 3600).toFixed(2);
-        const costStr = m.cost !== undefined ? `$${m.cost.toFixed(6)}` : '$0.000000';
+        const exactCost = m.cost !== undefined ? `$${m.cost.toFixed(6)}` : '$0.000000';
+        const costStr = m.cost !== undefined ? `$${m.cost.toFixed(4)}` : '$0.0000';
         const ramHuman = `${Math.round((m.memoryBytes || 0) / (1024 * 1024 * 1024))} GB`;
         const statusRaw = String(m.status || 'active').toUpperCase();
         const regionStr = String(m.region || 'fra').toUpperCase();
-        const scopeStr = m.isDeleted ? '' : (m.shared ? ' · SHARED' : ' · PRIVATE');
+        const scopeStr = m.isDeleted ? ' · TERHAPUS' : '';
 
-        let statusClass = 'text-emerald';
-        if (m.isDeleted) statusClass = 'text-dim';
-        else if (statusRaw === 'REMOTE' || statusRaw === 'PRIVATE') statusClass = 'text-sky';
-        else if (statusRaw === 'HIBERNATED' || statusRaw === 'SUSPENDED') statusClass = 'text-amber';
+        let badgeClass = 'status-green';
+        if (m.isDeleted || statusRaw === 'HIBERNATED' || statusRaw === 'STOPPED') badgeClass = 'status-neutral';
+        else if (statusRaw === 'REMOTE' || statusRaw === 'ACTIVE') badgeClass = 'status-sky';
+        else if (statusRaw === 'SUSPENDED' || statusRaw === 'STANDBY' || statusRaw === 'PAUSED') badgeClass = 'status-amber';
 
         const uptimeSec = (m.runningSeconds || 0).toLocaleString('en-US');
 
         rows.push(`
           <tr>
-            <td>
+            <td data-label="VM" class="telem-cell-vm">
               <strong class="font-mono" style="color: var(--text-primary);">${escapeHTML(m.name)}</strong>
-              <div style="font-size: 10px; color: var(--text-dim);">${escapeHTML(accItem.account.label)}${escapeHTML(scopeStr)}</div>
+              <div class="telem-vm-sub">${escapeHTML(accItem.account.label)}${escapeHTML(scopeStr)}</div>
             </td>
-            <td>
-              <span class="font-mono ${statusClass}" style="font-weight: 800;">${escapeHTML(statusRaw)}</span>
-              <span style="color: var(--text-dim);"> · ${escapeHTML(regionStr)}</span>
+            <td data-label="Status" class="telem-cell-status">
+              <span class="status-pill ${badgeClass} font-mono">${escapeHTML(statusRaw)}</span>
+              <span class="font-mono telem-region-tag">${escapeHTML(regionStr)}</span>
             </td>
-            <td>
-              <span class="font-mono">${m.vcpu} vCPU · ${ramHuman}</span>
+            <td data-label="Spek" class="telem-cell-spec">
+              <span class="font-mono nowrap-spec">${m.vcpu} vCPU · ${ramHuman}</span>
             </td>
-            <td>
-              <span class="font-mono">${uptimeSec}s (${hours}h)</span>
+            <td data-label="Uptime" class="num">
+              <span class="font-mono" title="${uptimeSec} detik"><span class="telem-uptime-hours">${hours}j</span><span class="telem-sec-sub">(${uptimeSec}s)</span></span>
             </td>
-            <td class="num">
+            <td data-label="vCPU·hr" class="num">
               <span class="font-mono">${m.vcpuHours ? m.vcpuHours.toFixed(4) : '0.0000'}</span>
             </td>
-            <td class="num">
+            <td data-label="RAM GiB·hr" class="num">
               <span class="font-mono">${m.ramGibHours ? m.ramGibHours.toFixed(4) : '0.0000'}</span>
             </td>
-            <td class="num">
-              <strong class="font-mono text-emerald">${costStr}</strong>
+            <td data-label="Biaya" class="num">
+              <strong class="font-mono text-emerald" title="${exactCost}">${costStr}</strong>
             </td>
           </tr>
         `);
@@ -1194,8 +1559,10 @@ function renderTelemetryView() {
     }
   });
 
+  if (countMeta) countMeta.textContent = `${rows.length} microVM`;
+
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 24px;">Belum ada riwayat komputasi aktif.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Belum ada riwayat komputasi aktif.</td></tr>`;
   } else {
     tbody.innerHTML = rows.join('');
   }
@@ -1269,6 +1636,25 @@ function onDeployAccountChange() {
   }
 }
 
+function onDeployUsagePresetChange() {
+  const preset = (document.getElementById('vmUsagePreset') || {}).value || 'balanced';
+  const customRow = document.getElementById('vmCustomIdleRow');
+  const suspInput = document.getElementById('vmSuspendInput');
+  const hibInput = document.getElementById('vmHibernateInput');
+  if (customRow) customRow.classList.toggle('hidden', preset !== 'custom');
+
+  if (preset === 'balanced') {
+    if (suspInput) suspInput.value = '300';
+    if (hibInput) hibInput.value = '14400';
+  } else if (preset === 'standby') {
+    if (suspInput) suspInput.value = '1800';
+    if (hibInput) hibInput.value = '0';
+  } else if (preset === 'always_on') {
+    if (suspInput) suspInput.value = '0';
+    if (hibInput) hibInput.value = '0';
+  }
+}
+
 function openNewMachineModal() {
   if (appState.accounts.length === 0) {
     showToast('Harap hubungkan akun Boxd terlebih dahulu', 'error');
@@ -1280,6 +1666,7 @@ function openNewMachineModal() {
     vmSelect.value = appState.selectedAccountId;
   }
   onDeployAccountChange();
+  onDeployUsagePresetChange();
   document.getElementById('newMachineModal').classList.remove('hidden');
 }
 
@@ -1304,17 +1691,47 @@ async function generateRandomName() {
 async function handleCreateMachine(e) {
   e.preventDefault();
   const btn = document.getElementById('createMachineBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span>Deploying ~2s...</span>';
 
   const accountId = document.getElementById('vmAccountSelect').value;
   const name = document.getElementById('vmNameInput').value.trim();
   const sizeVal = document.querySelector('input[name="vmSize"]:checked').value;
   const [vcpuStr, memStr] = sizeVal.split('x');
   const region = document.getElementById('vmRegionSelect').value;
-  const autoSuspendTimeout = parseInt(document.getElementById('vmSuspendInput').value, 10) || 0;
+  const usagePreset = (document.getElementById('vmUsagePreset') || {}).value || 'balanced';
+
+  let autoSuspendTimeout = 300;
+  let autoHibernateTimeout = 14400;
+  if (usagePreset === 'standby') {
+    autoSuspendTimeout = 1800;
+    autoHibernateTimeout = 0;
+  } else if (usagePreset === 'always_on') {
+    autoSuspendTimeout = 0;
+    autoHibernateTimeout = 0;
+  } else if (usagePreset === 'custom') {
+    autoSuspendTimeout = Math.max(0, parseInt((document.getElementById('vmSuspendInput') || {}).value, 10) || 0);
+    autoHibernateTimeout = Math.max(0, parseInt((document.getElementById('vmHibernateInput') || {}).value, 10) || 0);
+  }
+
+  const autoUpdEl = document.getElementById('vmAutoUpdateCheck');
+  const botOffEl = document.getElementById('vmBotOffCheck');
+  const upgradeNowEl = document.getElementById('vmUpgradeNowCheck');
+  const starterKits = Array.from(document.querySelectorAll('input[name="deployStarterKit"]:checked')).map(el => el.value);
+
   const sharedEl = document.getElementById('vmSharedInput');
   const shared = sharedEl ? !!sharedEl.checked : true;
+  const sshPasswordEl = document.getElementById('vmSshPasswordInput');
+  const sshUserEl = document.getElementById('vmSshUserSelect');
+  const sshPassword = sshPasswordEl ? sshPasswordEl.value : '';
+  const sshUser = sshUserEl ? sshUserEl.value : 'root';
+
+  if (sshPassword && sshPassword.length < 6) {
+    showToast('Password SSH minimal 6 karakter (atau kosongkan)', 'error');
+    return;
+  }
+
+  const hasAutoSetup = !!(autoUpdEl && autoUpdEl.checked) || !!(upgradeNowEl && upgradeNowEl.checked) || starterKits.length > 0;
+  btn.disabled = true;
+  btn.innerHTML = (sshPassword || hasAutoSetup) ? '<span>Deploying + Setup...</span>' : '<span>Deploying ~2s...</span>';
 
   try {
     const res = await apiFetch('/api/machines', {
@@ -1327,18 +1744,48 @@ async function handleCreateMachine(e) {
         memory: `${memStr}G`,
         region,
         shared,
-        autoSuspendTimeout
+        autoSuspendTimeout,
+        autoHibernateTimeout,
+        botProtectionMode: botOffEl && botOffEl.checked ? 'off' : 'on',
+        autoSetup: hasAutoSetup ? {
+          enableAutoUpdate: !!(autoUpdEl && autoUpdEl.checked),
+          intervalHours: 12,
+          updateRuntimes: true,
+          upgradeNow: !!(upgradeNowEl && upgradeNowEl.checked),
+          starterKits
+        } : undefined,
+        sshPassword: sshPassword || undefined,
+        sshUser: sshPassword ? sshUser : undefined
       })
     });
     const data = await res.json();
 
     if (res.ok && data.success) {
-      showToast(`VM "${data.machine.name}" berhasil dideploy!`, 'success');
+      const m = data.machine;
+      if (m && m.sshSetupError) {
+        showToast(`VM "${m.name}" dideploy, tapi SSH gagal: ${m.sshSetupError}`, 'error');
+      } else if (m && m.provisionJobId) {
+        showToast(`VM "${m.name}" dideploy! Setup stack & update berjalan...`, 'success');
+      } else if (m && m.sshAccess && m.sshAccess.enabled) {
+        showToast(`VM "${m.name}" + Password SSH siap dipakai!`, 'success');
+      } else {
+        showToast(`VM "${m.name}" berhasil dideploy!`, 'success');
+      }
       closeNewMachineModal();
       document.getElementById('newMachineForm').reset();
       if (sharedEl) sharedEl.checked = true;
+      if (autoUpdEl) autoUpdEl.checked = true;
+      if (botOffEl) botOffEl.checked = true;
       onDeployAccountChange();
-      await fetchDashboardData();
+      onDeployUsagePresetChange();
+      await fetchDashboardData({ silent: true });
+
+      if (m && m.provisionJobId) {
+        openVmManageModal(accountId, m.id, m.name, m.accountLabel || '', m.region || 'fra', {
+          initialTab: 'update',
+          initialJobId: m.provisionJobId
+        });
+      }
     } else {
       showToast(`Gagal membuat VM: ${data.error}`, 'error');
     }
@@ -1346,7 +1793,1116 @@ async function handleCreateMachine(e) {
     showToast('Koneksi gagal: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<span>Deploy VM</span>';
+    btn.innerHTML = '<span>Deploy MicroVM</span>';
+  }
+}
+
+function generateSecurePassword(length = 16) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#_-';
+  const out = [];
+  if (window.crypto && window.crypto.getRandomValues) {
+    const arr = new Uint32Array(length);
+    window.crypto.getRandomValues(arr);
+    for (let i = 0; i < length; i++) {
+      out.push(chars[arr[i] % chars.length]);
+    }
+  } else {
+    for (let i = 0; i < length; i++) {
+      out.push(chars[Math.floor(Math.random() * chars.length)]);
+    }
+  }
+  return out.join('');
+}
+
+function generateDeploySshPassword() {
+  const input = document.getElementById('vmSshPasswordInput');
+  if (input) {
+    input.value = generateSecurePassword(14);
+  }
+}
+
+// ================= SSH PASSWORD MODAL =================
+
+async function openSshPasswordModal(accountId, machineId, name, accountLabel, region) {
+  appState.sshPassTarget = { accountId, machineId, name, accountLabel, region };
+  appState.sshPassStatus = null;
+  appState.sshSavedRevealed = false;
+
+  document.getElementById('sshPassTargetName').textContent = name;
+  document.getElementById('sshPassTargetAccount').textContent = `${accountLabel} · ${(region || 'fra').toUpperCase()}`;
+  document.getElementById('sshPassInput').value = '';
+  document.getElementById('sshPassInput').type = 'password';
+  document.getElementById('sshPassInputToggleBtn').textContent = 'Lihat';
+
+  const badge = document.getElementById('sshPassStatusBadge');
+  badge.textContent = 'MEMUAT...';
+  badge.className = 'stat-subpill font-mono';
+  document.getElementById('sshPassStatusHint').textContent = 'Memeriksa port forward & status sshd VM...';
+  document.getElementById('sshPassStatusHint').classList.remove('hidden');
+  document.getElementById('sshPassConnectionInfo').classList.add('hidden');
+  document.getElementById('sshPassServiceWarn').classList.add('hidden');
+  document.getElementById('sshPassDisableBtn').classList.add('hidden');
+
+  document.getElementById('sshPasswordModal').classList.remove('hidden');
+  await refreshSshPasswordStatus();
+}
+
+function closeSshPasswordModal() {
+  document.getElementById('sshPasswordModal').classList.add('hidden');
+  appState.sshPassTarget = null;
+  appState.sshPassStatus = null;
+  appState.sshSavedRevealed = false;
+}
+
+async function refreshSshPasswordStatus() {
+  if (!appState.sshPassTarget) return;
+  const { accountId, machineId, region } = appState.sshPassTarget;
+
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/ssh-password?accountId=${encodeURIComponent(accountId)}&region=${encodeURIComponent(region || 'fra')}`);
+    const data = await res.json();
+    if (!appState.sshPassTarget || appState.sshPassTarget.machineId !== machineId) return;
+
+    if (res.ok && data.success) {
+      appState.sshPassStatus = data;
+      renderSshPasswordStatus(data);
+    } else {
+      document.getElementById('sshPassStatusBadge').textContent = 'ERROR';
+      document.getElementById('sshPassStatusHint').textContent = data.error || 'Gagal memeriksa status SSH';
+    }
+  } catch (err) {
+    document.getElementById('sshPassStatusBadge').textContent = 'ERROR';
+    document.getElementById('sshPassStatusHint').textContent = 'Koneksi gagal: ' + err.message;
+  }
+}
+
+function renderSshPasswordStatus(st) {
+  const badge = document.getElementById('sshPassStatusBadge');
+  const hint = document.getElementById('sshPassStatusHint');
+  const infoBox = document.getElementById('sshPassConnectionInfo');
+  const warnBox = document.getElementById('sshPassServiceWarn');
+  const disableBtn = document.getElementById('sshPassDisableBtn');
+
+  // Preselect active sshUser radio
+  const targetUser = st.sshUser || 'root';
+  const radio = document.querySelector(`input[name="sshPassUser"][value="${targetUser}"]`);
+  if (radio) radio.checked = true;
+
+  if (st.portExposed && st.publicPort) {
+    const isHealthy = st.sshServiceActive !== false;
+    badge.textContent = isHealthy ? `AKTIF · PORT ${st.publicPort}` : `PORT ${st.publicPort}`;
+    badge.className = isHealthy ? 'stat-subpill badge-green-soft font-mono' : 'stat-subpill font-mono';
+    hint.classList.add('hidden');
+    infoBox.classList.remove('hidden');
+    disableBtn.classList.remove('hidden');
+
+    document.getElementById('sshPassCommandText').textContent = st.command || `ssh -p ${st.publicPort} root@${st.dns}`;
+    document.getElementById('sshPassHostText').textContent = st.dns || '-';
+    document.getElementById('sshPassPortText').textContent = String(st.publicPort);
+    document.getElementById('sshPassUserText').textContent = st.sshUser === 'both' ? 'root & boxd' : (st.sshUser || 'root');
+
+    appState.sshSavedRevealed = false;
+    const savedText = document.getElementById('sshPassSavedText');
+    const revealBtn = document.getElementById('sshPassRevealSavedBtn');
+    const copyBtn = document.getElementById('sshPassCopySavedBtn');
+
+    if (st.password) {
+      savedText.textContent = '••••••••••••';
+      revealBtn.textContent = 'Lihat';
+      revealBtn.classList.remove('hidden');
+      copyBtn.classList.remove('hidden');
+    } else {
+      savedText.textContent = st.hasPassword ? '(Terkunci / secret berubah)' : '(Belum tersimpan di panel)';
+      revealBtn.classList.add('hidden');
+      copyBtn.classList.add('hidden');
+    }
+
+    if (st.sshServiceActive === false) {
+      warnBox.classList.remove('hidden');
+    } else {
+      warnBox.classList.add('hidden');
+    }
+  } else {
+    badge.textContent = 'BELUM AKTIF';
+    badge.className = 'stat-subpill font-mono';
+    infoBox.classList.add('hidden');
+    warnBox.classList.add('hidden');
+    disableBtn.classList.add('hidden');
+    hint.classList.remove('hidden');
+    hint.textContent = st.status === 'stopped'
+      ? 'VM sedang STOPPED. Nyalakan VM terlebih dahulu sebelum mengatur password SSH.'
+      : 'Belum ada port SSH password yang dibuka. Atur password di bawah untuk mengaktifkan akses SSH.';
+  }
+}
+
+function toggleSshInputVisibility() {
+  const input = document.getElementById('sshPassInput');
+  const btn = document.getElementById('sshPassInputToggleBtn');
+  if (!input || !btn) return;
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = 'Sembunyi';
+  } else {
+    input.type = 'password';
+    btn.textContent = 'Lihat';
+  }
+}
+
+function generateModalSshPassword() {
+  const input = document.getElementById('sshPassInput');
+  const btn = document.getElementById('sshPassInputToggleBtn');
+  if (input) {
+    input.value = generateSecurePassword(16);
+    input.type = 'text';
+    if (btn) btn.textContent = 'Sembunyi';
+    input.focus();
+  }
+}
+
+function toggleSavedSshPass() {
+  if (!appState.sshPassStatus || !appState.sshPassStatus.password) return;
+  const savedText = document.getElementById('sshPassSavedText');
+  const revealBtn = document.getElementById('sshPassRevealSavedBtn');
+  appState.sshSavedRevealed = !appState.sshSavedRevealed;
+  if (appState.sshSavedRevealed) {
+    savedText.textContent = appState.sshPassStatus.password;
+    revealBtn.textContent = 'Tutup';
+  } else {
+    savedText.textContent = '••••••••••••';
+    revealBtn.textContent = 'Lihat';
+  }
+}
+
+function copySavedSshPass() {
+  if (!appState.sshPassStatus || !appState.sshPassStatus.password) return;
+  copyToClipboard(appState.sshPassStatus.password, 'Password SSH disalin');
+}
+
+function copySshCommandFromModal() {
+  const cmd = document.getElementById('sshPassCommandText').textContent;
+  if (cmd && cmd !== '-') {
+    copyToClipboard(cmd, 'Perintah SSH disalin');
+  }
+}
+
+async function handleSaveSshPassword(e) {
+  e.preventDefault();
+  if (!appState.sshPassTarget) return;
+
+  const password = document.getElementById('sshPassInput').value;
+  const userEl = document.querySelector('input[name="sshPassUser"]:checked');
+  const sshUser = userEl ? userEl.value : 'root';
+
+  if (!password || password.length < 6) {
+    showToast('Password minimal 6 karakter', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('sshPassSubmitBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span>Mengaktifkan SSH...</span>';
+
+  try {
+    const { accountId, machineId, region } = appState.sshPassTarget;
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/ssh-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, password, sshUser })
+    });
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      showToast(`SSH aktif di port ${data.publicPort} (${data.sshUser})!`, 'success');
+      document.getElementById('sshPassInput').value = '';
+      await refreshSshPasswordStatus();
+      await fetchDashboardData();
+    } else {
+      showToast(`Gagal atur SSH: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span>Simpan &amp; Aktifkan</span>';
+  }
+}
+
+async function handleDisableSshPassword() {
+  if (!appState.sshPassTarget) return;
+  const { accountId, machineId, name, region } = appState.sshPassTarget;
+  if (!confirm(`Matikan login password SSH dan tutup port 22 untuk VM "${name}"?`)) {
+    return;
+  }
+
+  const disableBtn = document.getElementById('sshPassDisableBtn');
+  disableBtn.disabled = true;
+  disableBtn.textContent = 'Mematikan...';
+
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/ssh-password?accountId=${encodeURIComponent(accountId)}&region=${encodeURIComponent(region || 'fra')}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Akses password SSH untuk "${name}" dimatikan`, 'info');
+      await refreshSshPasswordStatus();
+      await fetchDashboardData();
+    } else {
+      showToast(`Gagal mematikan: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    disableBtn.disabled = false;
+    disableBtn.textContent = 'Matikan SSH Pass';
+  }
+}
+
+// ================= KELOLA & AUTO-UPDATE VM MODAL =================
+
+function clearManageJobPoller() {
+  if (appState.manageJobPoller) {
+    clearInterval(appState.manageJobPoller);
+    appState.manageJobPoller = null;
+  }
+}
+
+function switchManageTab(tabId) {
+  appState.manageActiveTab = tabId;
+  ['update', 'power', 'network', 'snapshot'].forEach(t => {
+    const btn = document.getElementById(`manageTabBtn-${t}`);
+    const pane = document.getElementById(`managePane-${t}`);
+    if (btn) btn.classList.toggle('active', t === tabId);
+    if (pane) pane.classList.toggle('hidden', t !== tabId);
+  });
+}
+
+async function openVmManageModal(accountId, machineId, name, accountLabel, region, options = {}) {
+  clearManageJobPoller();
+  appState.manageTarget = { accountId, machineId, name, accountLabel, region: region || 'fra' };
+  appState.manageState = null;
+
+  document.getElementById('manageTargetName').textContent = name || machineId;
+  document.getElementById('manageTargetMeta').textContent = `${accountLabel || accountId} · ${(region || 'fra').toUpperCase()}`;
+  document.getElementById('manageOsSummary').textContent = 'Memeriksa kondisi VM…';
+  const badge = document.getElementById('manageAutoUpdBadge');
+  badge.textContent = 'MEMUAT…';
+  badge.className = 'stat-subpill font-mono';
+  document.getElementById('manageUpgradableCount').textContent = '-';
+  document.getElementById('manageLastUpdateInfo').textContent = '-';
+  document.getElementById('manageDiskUptime').textContent = '-';
+  document.getElementById('manageInstalledTools').classList.add('hidden');
+  document.getElementById('vmManageJobCard').classList.add('hidden');
+  document.getElementById('manageStarterKitsGrid').innerHTML = '<div class="font-mono text-dim" style="font-size: 11px;">Memuat…</div>';
+  document.getElementById('managePortsList').innerHTML = '';
+  document.getElementById('manageProxiesList').innerHTML = '';
+  document.getElementById('manageSnapshotsList').innerHTML = '';
+
+  switchManageTab(options.initialTab || 'update');
+  document.getElementById('vmManageModal').classList.remove('hidden');
+
+  await refreshVmManageState();
+
+  if (options.initialJobId) {
+    startManageJobPolling(options.initialJobId);
+  }
+}
+
+function closeVmManageModal() {
+  clearManageJobPoller();
+  document.getElementById('vmManageModal').classList.add('hidden');
+  appState.manageTarget = null;
+  appState.manageState = null;
+}
+
+async function refreshVmManageState() {
+  if (!appState.manageTarget) return;
+  const { accountId, machineId, region } = appState.manageTarget;
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/manage?accountId=${encodeURIComponent(accountId)}&region=${encodeURIComponent(region || 'fra')}`);
+    const data = await res.json();
+    if (!appState.manageTarget || appState.manageTarget.machineId !== machineId) return;
+
+    if (res.ok && data.success) {
+      appState.manageState = data;
+      renderVmManageState(data);
+    } else {
+      document.getElementById('manageOsSummary').textContent = data.error || 'Gagal memuat status VM';
+      document.getElementById('manageAutoUpdBadge').textContent = 'ERROR';
+    }
+  } catch (err) {
+    document.getElementById('manageOsSummary').textContent = 'Koneksi gagal: ' + err.message;
+  }
+}
+
+function syncQuickIdleChips() {
+  const suspVal = String(document.getElementById('manageSuspendInput')?.value ?? '').trim();
+  const hibVal = String(document.getElementById('manageHibernateInput')?.value ?? '').trim();
+  document.querySelectorAll('.quick-sec-chips .cmd-pill').forEach(btn => {
+    const target = btn.getAttribute('data-target');
+    const val = btn.getAttribute('data-val');
+    const cur = target === 'manageSuspendInput' ? suspVal : target === 'manageHibernateInput' ? hibVal : '';
+    btn.classList.toggle('is-active', cur !== '' && cur === val);
+  });
+}
+
+function syncResizeButtonState() {
+  const btn = document.getElementById('manageResizeBtn');
+  const hint = document.getElementById('manageResizeHint');
+  const checked = document.querySelector('input[name="manageResizeTier"]:checked');
+  const m = (appState.manageState && appState.manageState.machine) || {};
+  const curVcpu = Number((m.resources && m.resources.vcpu) || 0);
+  const selVcpu = checked ? Number(checked.value) : 0;
+
+  document.querySelectorAll('[data-tier-now]').forEach(el => {
+    const t = Number(el.getAttribute('data-tier-now'));
+    el.classList.toggle('hidden', t !== curVcpu);
+  });
+
+  const memMap = { 1: '4 GB', 2: '8 GB', 4: '16 GB', 8: '32 GB' };
+  if (btn) {
+    const sameTier = curVcpu > 0 && selVcpu === curVcpu;
+    btn.disabled = !checked || sameTier;
+    if (hint) {
+      hint.textContent = sameTier
+        ? `VM sudah memakai spek ${curVcpu} vCPU · ${memMap[curVcpu] || ''}. Pilih ukuran lain untuk resize.`
+        : `Siap ubah spek ke ${selVcpu} vCPU · ${memMap[selVcpu] || ''} (efektif saat running/stopped).`;
+    }
+  }
+}
+
+function renderVmManageState(data) {
+  const m = data.machine || {};
+  const cfg = data.vmConfig || m.vmConfig || {};
+  const insp = data.inspection || null;
+  const statusInfo = getMachineStatusInfo(m);
+  const statusUpper = statusInfo.statusText || String(m.status || 'unknown').toUpperCase();
+
+  document.getElementById('manageTargetName').textContent = m.name || '-';
+  document.getElementById('manageTargetMeta').textContent = `${m.accountLabel || ''} · ${String(m.region || 'fra').toUpperCase()} · ${statusUpper}`;
+
+  const badge = document.getElementById('manageAutoUpdBadge');
+  const autoOn = !!(cfg.autoUpdateEnabled || (insp && (insp.timerEnabled || insp.timerActive)));
+  const intervalHrs = cfg.autoUpdateIntervalHours || 12;
+
+  if (autoOn) {
+    badge.textContent = `AKTIF · TIAP ${intervalHrs}J`;
+    badge.className = 'stat-subpill badge-green-soft font-mono';
+  } else if (insp && insp.reachable && !insp.aptCacheReady) {
+    badge.textContent = 'APT CACHE KOSONG';
+    badge.className = 'stat-subpill badge-amber font-mono';
+  } else {
+    badge.textContent = 'NONAKTIF';
+    badge.className = 'stat-subpill font-mono';
+  }
+
+  document.getElementById('manageAutoUpdateToggle').checked = autoOn;
+  const intervalSel = document.getElementById('manageAutoUpdateInterval');
+  if (intervalSel) {
+    const targetVal = String(intervalHrs);
+    if (Array.from(intervalSel.options).some(o => o.value === targetVal)) {
+      intervalSel.value = targetVal;
+    }
+  }
+  document.getElementById('manageAutoUpdateRuntimes').checked = cfg.autoUpdateRuntimes !== false;
+
+  const osSummaryEl = document.getElementById('manageOsSummary');
+  const upgEl = document.getElementById('manageUpgradableCount');
+  const lastUpdEl = document.getElementById('manageLastUpdateInfo');
+  const diskUptimeEl = document.getElementById('manageDiskUptime');
+  const toolsEl = document.getElementById('manageInstalledTools');
+
+  if (insp && insp.reachable) {
+    osSummaryEl.textContent = `${insp.os || 'Linux'} · Kernel ${insp.kernel || '-'}`;
+    if (!insp.aptCacheReady) {
+      upgEl.textContent = 'Cache kosong (perlu refresh)';
+    } else if (insp.upgradableCount === 0) {
+      upgEl.textContent = '0 (Mutakhir)';
+    } else {
+      upgEl.textContent = `${insp.upgradableCount} paket`;
+    }
+    diskUptimeEl.textContent = `${insp.disk || '-'} · ${insp.uptime || '-'}`;
+    if (Array.isArray(insp.tools) && insp.tools.length > 0) {
+      toolsEl.textContent = `Tools aktif: ${insp.tools.join(', ')}`;
+      toolsEl.classList.remove('hidden');
+    } else {
+      toolsEl.classList.add('hidden');
+    }
+  } else {
+    osSummaryEl.textContent = m.status === 'running'
+      ? 'VM running tetapi agen inspeksi belum merespons.'
+      : `VM berstatus ${statusUpper}. Klik "Update Sekarang" atau simpan jadwal untuk menyalakan VM otomatis & update.`;
+    upgEl.textContent = '-';
+    diskUptimeEl.textContent = '-';
+    toolsEl.classList.add('hidden');
+  }
+
+  if (cfg.lastUpdateAt) {
+    const tStr = new Date(cfg.lastUpdateAt).toLocaleString('id-ID', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+    });
+    lastUpdEl.textContent = `${tStr}${cfg.lastUpdateSummary ? ' · ' + cfg.lastUpdateSummary : ''}`;
+  } else {
+    lastUpdEl.textContent = 'Belum pernah';
+  }
+
+  // Starter kits
+  const kits = Array.isArray(data.starterKits) ? data.starterKits : [];
+  const installedKits = Array.isArray(cfg.starterKits) ? cfg.starterKits : [];
+  const kitsGrid = document.getElementById('manageStarterKitsGrid');
+  kitsGrid.innerHTML = kits.map(kit => {
+    const isInstalled = installedKits.includes(kit.id);
+    return `
+      <label class="kit-card">
+        <input type="checkbox" name="manageStarterKit" value="${escapeAttr(kit.id)}">
+        <div style="min-width: 0; flex: 1;">
+          <div class="kit-card-title">
+            <span>${escapeHTML(kit.label)}</span>
+            ${isInstalled ? '<span class="mc-mode-chip is-always-on">TERPASANG</span>' : ''}
+          </div>
+          <div class="kit-card-desc font-mono">${escapeHTML(kit.desc)}</div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  // Power & Spec tab
+  const alwaysOnPill = document.getElementById('manageAlwaysOnStatusPill');
+  const isAlwaysOn = !!m.alwaysOn && String(m.botProtectionMode || '').toLowerCase() === 'off';
+  if (alwaysOnPill) {
+    alwaysOnPill.textContent = isAlwaysOn ? 'AKTIF' : 'OFF';
+    alwaysOnPill.className = isAlwaysOn ? 'stat-subpill badge-green-soft font-mono' : 'stat-subpill font-mono';
+  }
+  document.getElementById('manageSuspendInput').value = m.autoSuspendTimeout !== undefined ? m.autoSuspendTimeout : 300;
+  document.getElementById('manageHibernateInput').value = m.autoHibernateTimeout !== undefined ? m.autoHibernateTimeout : 14400;
+  document.getElementById('manageBotProtectionSelect').value = m.botProtectionMode || 'on';
+  document.getElementById('manageIdleIgnoreOutbound').checked = !!m.idleIgnoreOutbound;
+  syncQuickIdleChips();
+  const vcpuVal = String((m.resources && m.resources.vcpu) || 1);
+  const tierRadio = document.querySelector(`input[name="manageResizeTier"][value="${vcpuVal}"]`);
+  if (tierRadio) tierRadio.checked = true;
+  syncResizeButtonState();
+
+  // Network tab
+  const domain = (m.access && m.access.domain) || `${m.region || 'fra'}.boxd.sh`;
+  const proxies = Array.isArray(data.proxies) ? data.proxies : [];
+  const defaultProxy = proxies.find(p => p.isDefault || !p.name);
+  const defaultPortInput = document.getElementById('manageDefaultProxyPortInput');
+  if (defaultPortInput) {
+    if (defaultProxy) {
+      defaultPortInput.value = defaultProxy.portMode === 'auto' ? 'auto' : String(defaultProxy.port || 'auto');
+    } else {
+      defaultPortInput.value = 'auto';
+    }
+  }
+
+  const proxiesListEl = document.getElementById('manageProxiesList');
+  if (proxies.length === 0) {
+    proxiesListEl.innerHTML = `<div class="font-mono text-muted" style="font-size: 10.5px;">Belum ada subdomain proxy tambahan. Default URL: https://${escapeHTML(m.name)}.${escapeHTML(domain)}</div>`;
+  } else {
+    proxiesListEl.innerHTML = proxies.map(p => {
+      const pDomain = p.domain || (p.name ? `${p.name}.${m.name}.${domain}` : `${m.name}.${domain}`);
+      const pUrl = p.url || `https://${pDomain}`;
+      const isDef = !!(p.isDefault || !p.name);
+      const portLabel = p.portMode === 'auto'
+        ? `auto${p.port ? ` (aktif :${p.port})` : ''}`
+        : String(p.port || '-');
+      return `
+        <div class="manage-item-row">
+          <div class="manage-item-info">
+            <div class="manage-item-main font-mono">${escapeHTML(pUrl)}</div>
+            <div class="manage-item-sub font-mono">Target port: ${escapeHTML(portLabel)}${isDef ? ' · Default' : ` · Subdomain "${escapeHTML(p.name)}"`}</div>
+          </div>
+          <div class="manage-item-actions">
+            <a href="${escapeAttr(pUrl)}" target="_blank" rel="noopener" class="ep-btn">Visit ↗</a>
+            ${!isDef && p.name ? `<button type="button" class="ep-btn danger" onclick="handleDeleteNamedProxy('${escapeAttr(p.name)}')">Hapus</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  const ports = Array.isArray(data.ports) ? data.ports : [];
+  const portsListEl = document.getElementById('managePortsList');
+  if (ports.length === 0) {
+    portsListEl.innerHTML = `<div class="font-mono text-muted" style="font-size: 10.5px;">Belum ada port TCP/UDP yang diekspos.</div>`;
+  } else {
+    portsListEl.innerHTML = ports.map(pt => {
+      const vmPort = Number(pt.machinePort !== undefined ? pt.machinePort : (pt.internalPort !== undefined ? pt.internalPort : 0));
+      const targetStr = `${pt.dns || `${m.name}.${domain}`}:${pt.publicPort}`;
+      const isSsh = vmPort === 22;
+      return `
+        <div class="manage-item-row">
+          <div class="manage-item-info">
+            <div class="manage-item-main font-mono">:${escapeHTML(String(vmPort))} (${escapeHTML(String(pt.protocol || 'tcp').toUpperCase())}) → ${escapeHTML(targetStr)}</div>
+            <div class="manage-item-sub font-mono">${isSsh ? 'Port SSH VM' : 'Port Forward Aktif'}</div>
+          </div>
+          <div class="manage-item-actions">
+            <button type="button" class="ep-btn" onclick="copyToClipboard('${escapeAttr(targetStr)}', 'Endpoint disalin')">Copy</button>
+            <button type="button" class="ep-btn danger" onclick="handleUnexposePort(${vmPort}, ${isSsh})">Tutup</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Snapshots tab
+  const snaps = Array.isArray(data.snapshots) ? data.snapshots : [];
+  const snapsListEl = document.getElementById('manageSnapshotsList');
+  if (snaps.length === 0) {
+    snapsListEl.innerHTML = `<div class="font-mono text-muted" style="font-size: 10.5px;">Belum ada snapshot di region ${escapeHTML(String(m.region || 'fra').toUpperCase())}.</div>`;
+  } else {
+    snapsListEl.innerHTML = snaps.map(sn => {
+      const sName = sn.name || sn.id;
+      const sizeStr = sn.sizeBytes ? `${(sn.sizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
+      const statusStr = sn.status ? ` · ${String(sn.status).toUpperCase()}` : '';
+      const canDeploy = !sn.archived && (!sn.status || sn.status === 'ready');
+      return `
+        <div class="manage-item-row">
+          <div class="manage-item-info">
+            <div class="manage-item-main font-mono">${escapeHTML(sName)}</div>
+            <div class="manage-item-sub font-mono">${escapeHTML(String(sn.region || m.region || 'fra').toUpperCase())}${sizeStr ? ' · ' + escapeHTML(sizeStr) : ''}${escapeHTML(statusStr)}</div>
+          </div>
+          <div class="manage-item-actions">
+            <button type="button" class="ep-btn" ${canDeploy ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'} onclick="handleDeployFromSnapshot('${escapeAttr(sName)}')">Deploy VM</button>
+            <button type="button" class="ep-btn danger" onclick="handleDeleteVmSnapshot('${escapeAttr(sName)}')">Hapus</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Active or latest job
+  const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+  const runningJob = jobs.find(j => j.status === 'running');
+  if (runningJob) {
+    renderManageJob(runningJob);
+    startManageJobPolling(runningJob.id);
+  } else if (jobs.length > 0 && !appState.manageJobPoller) {
+    renderManageJob(jobs[0]);
+  }
+}
+
+function renderManageJob(job) {
+  if (!job) return;
+  const card = document.getElementById('vmManageJobCard');
+  const title = document.getElementById('manageJobTitle');
+  const meta = document.getElementById('manageJobMeta');
+  const badge = document.getElementById('manageJobStatusBadge');
+  const logBox = document.getElementById('manageJobLogBox');
+
+  card.classList.remove('hidden');
+  title.textContent = job.title || 'VM TASK LOG';
+  const elapsed = Math.max(0, Math.round(((job.finishedAt || Date.now()) - job.startedAt) / 1000));
+  meta.textContent = `Fase: ${job.phase || '-'} · Durasi: ${elapsed}s${job.error ? ' · ' + job.error : ''}`;
+
+  const st = String(job.status || 'running').toUpperCase();
+  badge.textContent = st;
+  badge.className = st === 'SUCCESS'
+    ? 'stat-subpill badge-green-soft font-mono'
+    : st === 'ERROR'
+      ? 'stat-subpill status-rose font-mono'
+      : 'stat-subpill status-amber font-mono';
+
+  logBox.textContent = job.output || (job.status === 'running' ? 'Menjalankan di dalam VM...' : '(Tidak ada output)');
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function startManageJobPolling(jobId) {
+  clearManageJobPoller();
+  const poll = async () => {
+    if (!appState.manageTarget) {
+      clearManageJobPoller();
+      return;
+    }
+    try {
+      const res = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+      const data = await res.json();
+      if (res.ok && data.success && data.job) {
+        renderManageJob(data.job);
+        if (data.job.status !== 'running') {
+          clearManageJobPoller();
+          showToast(
+            data.job.status === 'success'
+              ? `${data.job.title} selesai!`
+              : `${data.job.title} gagal: ${data.job.error || 'error'}`,
+            data.job.status === 'success' ? 'success' : 'error'
+          );
+          await refreshVmManageState();
+          await fetchDashboardData({ silent: true });
+        }
+      }
+    } catch (e) {}
+  };
+  poll();
+  appState.manageJobPoller = setInterval(poll, 2000);
+}
+
+async function handleSaveVmAutoUpdate() {
+  if (!appState.manageTarget) return;
+  const btn = document.getElementById('manageSaveAutoUpdateBtn');
+  const enabled = document.getElementById('manageAutoUpdateToggle').checked;
+  const intervalHours = parseInt(document.getElementById('manageAutoUpdateInterval').value, 10) || 12;
+  const updateRuntimes = document.getElementById('manageAutoUpdateRuntimes').checked;
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan...';
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/autoupdate/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, enabled, intervalHours, updateRuntimes })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(enabled ? `Auto-update aktif tiap ${intervalHours} jam` : 'Auto-update dinonaktifkan', 'success');
+      await refreshVmManageState();
+      await fetchDashboardData({ silent: true });
+    } else {
+      showToast(`Gagal atur auto-update: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Simpan Jadwal';
+  }
+}
+
+async function handleRunVmUpdateNow() {
+  if (!appState.manageTarget) return;
+  const btn = document.getElementById('manageRunUpdateNowBtn');
+  const intervalHours = parseInt(document.getElementById('manageAutoUpdateInterval').value, 10) || 12;
+  const updateRuntimes = document.getElementById('manageAutoUpdateRuntimes').checked;
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  btn.disabled = true;
+  btn.textContent = 'Memulai...';
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/autoupdate/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, intervalHours, updateRuntimes })
+    });
+    const data = await res.json();
+    if (res.ok && data.success && data.jobId) {
+      showToast('Update OS & runtime dimulai di background', 'info');
+      renderManageJob(data.job);
+      startManageJobPolling(data.jobId);
+    } else {
+      showToast(`Gagal memulai update: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Update Sekarang';
+  }
+}
+
+async function handleInstallStarterKits() {
+  if (!appState.manageTarget) return;
+  const starterKits = Array.from(document.querySelectorAll('input[name="manageStarterKit"]:checked')).map(el => el.value);
+  if (starterKits.length === 0) {
+    showToast('Centang minimal satu starter stack untuk di-install', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('manageInstallKitsBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+  btn.disabled = true;
+  btn.textContent = 'Memulai...';
+
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/packages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, starterKits })
+    });
+    const data = await res.json();
+    if (res.ok && data.success && data.jobId) {
+      showToast('Instalasi starter stack dimulai', 'info');
+      document.querySelectorAll('input[name="manageStarterKit"]:checked').forEach(el => { el.checked = false; });
+      renderManageJob(data.job);
+      startManageJobPolling(data.jobId);
+    } else {
+      showToast(`Gagal install stack: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Install Stack';
+  }
+}
+
+async function handleInstallCustomPackages(e) {
+  e.preventDefault();
+  if (!appState.manageTarget) return;
+  const pkgType = document.getElementById('manageCustomPkgType').value;
+  const rawInput = document.getElementById('manageCustomPkgInput').value.trim();
+  if (!rawInput) return;
+
+  const btn = document.getElementById('manageInstallCustomBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+  btn.disabled = true;
+  btn.textContent = 'Memulai...';
+
+  try {
+    const payload = {
+      accountId,
+      region,
+      aptPackages: pkgType === 'apt' ? rawInput : [],
+      npmPackages: pkgType === 'npm' ? rawInput : []
+    };
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/packages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.ok && data.success && data.jobId) {
+      showToast(`Instalasi paket ${pkgType.toUpperCase()} dimulai`, 'info');
+      document.getElementById('manageCustomPkgInput').value = '';
+      renderManageJob(data.job);
+      startManageJobPolling(data.jobId);
+    } else {
+      showToast(`Gagal install paket: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Install';
+  }
+}
+
+function setManageIdleVal(inputId, val) {
+  const el = document.getElementById(inputId);
+  if (el) el.value = String(val);
+  syncQuickIdleChips();
+}
+
+async function handleEnableAlwaysOnMode() {
+  if (!appState.manageTarget) return;
+  const btn = document.getElementById('manageAlwaysOnBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+  btn.disabled = true;
+  btn.textContent = 'Mengaktifkan...';
+
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/runtime-settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, alwaysOn: true })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast('Mode Sepuasnya (Always-On + Bot Off) aktif!', 'success');
+      await refreshVmManageState();
+      await fetchDashboardData({ silent: true });
+    } else {
+      showToast(`Gagal mengaktifkan Always-On: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Aktifkan Always-On';
+  }
+}
+
+async function handleSaveRuntimeSettings(e) {
+  e.preventDefault();
+  if (!appState.manageTarget) return;
+  const btn = document.getElementById('manageSaveRuntimeBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  const autoSuspendTimeout = parseInt(document.getElementById('manageSuspendInput').value, 10) || 0;
+  const autoHibernateTimeout = parseInt(document.getElementById('manageHibernateInput').value, 10) || 0;
+  const botProtectionMode = document.getElementById('manageBotProtectionSelect').value;
+  const idleIgnoreOutbound = document.getElementById('manageIdleIgnoreOutbound').checked;
+
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan...';
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/runtime-settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId,
+        region,
+        autoSuspendTimeout,
+        autoHibernateTimeout,
+        botProtectionMode,
+        idleIgnoreOutbound
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast('Pengaturan idle & proteksi web disimpan', 'success');
+      await refreshVmManageState();
+      await fetchDashboardData({ silent: true });
+    } else {
+      showToast(`Gagal menyimpan: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Simpan Pengaturan';
+  }
+}
+
+async function handleResizeVm() {
+  if (!appState.manageTarget) return;
+  const checked = document.querySelector('input[name="manageResizeTier"]:checked');
+  if (!checked) return;
+  const vcpu = parseInt(checked.value, 10);
+  const memMap = { 1: '4G', 2: '8G', 4: '16G', 8: '32G' };
+  const memory = memMap[vcpu] || '4G';
+  const btn = document.getElementById('manageResizeBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  btn.disabled = true;
+  btn.textContent = 'Mengubah spek...';
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/resize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, vcpu, memory })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`VM di-resize ke ${vcpu} vCPU · ${memory}`, 'success');
+      await refreshVmManageState();
+      await fetchDashboardData({ silent: true });
+    } else {
+      showToast(`Gagal resize: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Terapkan Resize';
+  }
+}
+
+async function handleSetDefaultProxyPort(e) {
+  e.preventDefault();
+  if (!appState.manageTarget) return;
+  const raw = document.getElementById('manageDefaultProxyPortInput').value.trim();
+  const port = raw.toLowerCase() === 'auto' ? 'auto' : parseInt(raw, 10);
+  const btn = document.getElementById('manageDefaultProxyPortBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/proxies/default-port`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, port })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Default web route diatur ke port ${port}`, 'success');
+      await refreshVmManageState();
+    } else {
+      showToast(`Gagal atur route: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleCreateNamedProxy(e) {
+  e.preventDefault();
+  if (!appState.manageTarget) return;
+  const name = document.getElementById('manageNewProxyName').value.trim().toLowerCase();
+  const port = parseInt(document.getElementById('manageNewProxyPort').value, 10);
+  const btn = document.getElementById('manageCreateProxyBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/proxies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, name, port })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Subdomain "${name}" -> port ${port} dibuat`, 'success');
+      document.getElementById('manageNewProxyName').value = '';
+      document.getElementById('manageNewProxyPort').value = '';
+      await refreshVmManageState();
+    } else {
+      showToast(`Gagal membuat subdomain: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleDeleteNamedProxy(name) {
+  if (!appState.manageTarget) return;
+  const { accountId, machineId, region } = appState.manageTarget;
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/proxies/${encodeURIComponent(name)}?accountId=${encodeURIComponent(accountId)}&region=${encodeURIComponent(region || 'fra')}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Subdomain "${name}" dihapus`, 'info');
+      await refreshVmManageState();
+    } else {
+      showToast(`Gagal hapus: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function handleExposePort(e) {
+  e.preventDefault();
+  if (!appState.manageTarget) return;
+  const port = parseInt(document.getElementById('manageExposePortInput').value, 10);
+  const protocol = document.getElementById('manageExposeProtoSelect').value;
+  const btn = document.getElementById('manageExposePortBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/ports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, region, port, protocol })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Port ${port}/${protocol} diekspos!`, 'success');
+      document.getElementById('manageExposePortInput').value = '';
+      await refreshVmManageState();
+    } else {
+      showToast(`Gagal expose port: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleUnexposePort(port, isSsh) {
+  if (!appState.manageTarget) return;
+  if (isSsh && !confirm('Port 22 dipakai untuk SSH Password. Yakin ingin menutup port 22?')) {
+    return;
+  }
+  const { accountId, machineId, region } = appState.manageTarget;
+  try {
+    const res = await apiFetch(`/api/machines/${encodeURIComponent(machineId)}/ports/${encodeURIComponent(port)}?accountId=${encodeURIComponent(accountId)}&region=${encodeURIComponent(region || 'fra')}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Port ${port} ditutup`, 'info');
+      await refreshVmManageState();
+    } else {
+      showToast(`Gagal tutup port: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function handleCreateVmSnapshot(e) {
+  e.preventDefault();
+  if (!appState.manageTarget) return;
+  const name = document.getElementById('manageSnapNameInput').value.trim();
+  if (!name) return;
+  const btn = document.getElementById('manageCreateSnapBtn');
+  const { accountId, machineId, region } = appState.manageTarget;
+
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan...';
+  try {
+    const res = await apiFetch('/api/snapshots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, machineId, name, region })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Snapshot "${name}" dibuat`, 'success');
+      document.getElementById('manageSnapNameInput').value = '';
+      await refreshVmManageState();
+    } else {
+      showToast(`Gagal buat snapshot: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '+ Buat Snapshot';
+  }
+}
+
+async function handleDeployFromSnapshot(snapshotName) {
+  if (!appState.manageTarget) return;
+  const { accountId, region } = appState.manageTarget;
+  const defaultNewName = `${snapshotName}-${Math.floor(10 + Math.random() * 89)}`.slice(0, 32);
+  const vmName = prompt(`Nama VM baru dari snapshot "${snapshotName}" (opsional):`, defaultNewName);
+  if (vmName === null) return;
+
+  showToast(`Mendeploy VM dari snapshot "${snapshotName}"...`, 'info');
+  try {
+    const res = await apiFetch('/api/machines/from-snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId,
+        fromSnapshot: snapshotName,
+        name: vmName.trim() || undefined,
+        region,
+        shared: true,
+        alwaysOn: false
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`VM "${data.machine.name}" berhasil dideploy dari snapshot!`, 'success');
+      closeVmManageModal();
+      await fetchDashboardData({ silent: true });
+    } else {
+      showToast(`Gagal deploy snapshot: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function handleDeleteVmSnapshot(snapshotName) {
+  if (!appState.manageTarget) return;
+  if (!confirm(`Hapus snapshot "${snapshotName}" permanen?`)) return;
+  const { accountId, region } = appState.manageTarget;
+  try {
+    const res = await apiFetch(`/api/snapshots/${encodeURIComponent(snapshotName)}?accountId=${encodeURIComponent(accountId)}&region=${encodeURIComponent(region || 'fra')}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Snapshot "${snapshotName}" dihapus`, 'info');
+      await refreshVmManageState();
+    } else {
+      showToast(`Gagal hapus snapshot: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
   }
 }
 
@@ -1403,10 +2959,42 @@ async function handleRunExec(e) {
     });
     const data = await res.json();
 
+    const outParts = [];
+    if (data.stdout) outParts.push(data.stdout.trimEnd());
+    if (data.stderr) outParts.push(data.stderr.trimEnd());
+    const combinedOut = outParts.join('\n');
+
     const resultBlock = document.createElement('div');
     resultBlock.style.color = data.success ? '#e2e8f0' : '#f87171';
-    resultBlock.textContent = data.stdout || data.stderr || (data.success ? '(Selesai tanpa output)' : data.error);
+    resultBlock.textContent = combinedOut || (data.success ? '(Selesai tanpa output)' : data.error);
     screen.appendChild(resultBlock);
+
+    if (!data.success && combinedOut) {
+      let fixLabel = null;
+      let fixCmd = null;
+      if (/Unable to locate package/i.test(combinedOut)) {
+        fixLabel = '⚡ Cache APT kosong — Klik untuk isi sudo apt-get update';
+        fixCmd = 'sudo apt-get update';
+      } else if (/Permission denied|are you root/i.test(combinedOut) && !/^sudo\s+/i.test(cmd)) {
+        fixLabel = '↻ Ulangi perintah pakai sudo';
+        fixCmd = `sudo ${cmd}`;
+      } else if (/Do you want to continue|Abort\./i.test(combinedOut) && !/\s-y\b/.test(cmd)) {
+        fixLabel = '↻ Ulangi non-interaktif (-y)';
+        fixCmd = `${/^sudo\s+/i.test(cmd) ? '' : 'sudo '}${cmd} -y`;
+      }
+      if (fixLabel && fixCmd) {
+        const hintBtn = document.createElement('button');
+        hintBtn.type = 'button';
+        hintBtn.className = 'cmd-pill';
+        hintBtn.style.marginTop = '6px';
+        hintBtn.textContent = fixLabel;
+        hintBtn.onclick = () => {
+          setExecCmd(fixCmd);
+          document.getElementById('execForm').requestSubmit();
+        };
+        screen.appendChild(hintBtn);
+      }
+    }
 
     screen.scrollTop = screen.scrollHeight;
     input.value = '';
@@ -1520,13 +3108,15 @@ function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast ${type === 'success' ? 'success' : type === 'error' ? 'error' : ''}`;
   toast.textContent = message;
+  toast.title = 'Klik untuk tutup';
+  toast.onclick = () => toast.remove();
   container.appendChild(toast);
 
   setTimeout(() => {
     toast.style.opacity = '0';
-    toast.style.transform = 'translateY(10px)';
+    toast.style.transform = 'translateY(-8px)';
     setTimeout(() => toast.remove(), 200);
-  }, 3000);
+  }, 2800);
 }
 
 function escapeHTML(str) {
@@ -1547,4 +3137,582 @@ function escapeAttr(str) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+// ================= EXTERNAL API WORKSPACE & KEYS =================
+
+let apiWorkspaceState = {
+  apiEnabled: true,
+  ipWhitelistEnabled: false,
+  currentIp: '-',
+  allowedIps: [],
+  keys: [],
+  logs: [],
+  activeDocTab: 'create'
+};
+
+function getApiBaseUrl() {
+  return `${window.location.origin}/api/v1`;
+}
+
+async function loadApiWorkspace() {
+  const baseEl = document.getElementById('apiBaseUrlDisplay');
+  if (baseEl) baseEl.textContent = getApiBaseUrl();
+  renderApiDocSnippet();
+
+  try {
+    const res = await apiFetch('/api/security/api-config');
+    const data = await res.json();
+    if (res.ok && data.success) {
+      apiWorkspaceState = {
+        ...apiWorkspaceState,
+        apiEnabled: !!data.apiEnabled,
+        ipWhitelistEnabled: !!data.ipWhitelistEnabled,
+        currentIp: data.currentIp || '-',
+        allowedIps: Array.isArray(data.allowedIps) ? data.allowedIps : [],
+        keys: Array.isArray(data.keys) ? data.keys : [],
+        logs: Array.isArray(data.logs) ? data.logs : []
+      };
+      renderApiWorkspace();
+    }
+  } catch (err) {
+    console.error('Failed to load API workspace:', err);
+  }
+}
+
+function renderApiWorkspace() {
+  const masterBadge = document.getElementById('apiMasterStatusBadge');
+  const masterBtn = document.getElementById('apiMasterToggleBtn');
+  if (masterBadge) {
+    masterBadge.textContent = apiWorkspaceState.apiEnabled ? 'AKTIF' : 'NONAKTIF';
+    masterBadge.className = `stat-subpill font-mono ${apiWorkspaceState.apiEnabled ? 'badge-green-soft' : ''}`;
+  }
+  if (masterBtn) {
+    masterBtn.textContent = apiWorkspaceState.apiEnabled ? 'Matikan' : 'Aktifkan';
+    masterBtn.className = `action-btn ${apiWorkspaceState.apiEnabled ? 'danger' : 'primary'}`;
+  }
+
+  const ipBadge = document.getElementById('apiIpStatusBadge');
+  const ipBtn = document.getElementById('apiIpToggleBtn');
+  const curIpEl = document.getElementById('apiCurrentIpDisplay');
+  const allowSelfBtn = document.getElementById('apiAllowMyIpBtn');
+
+  if (curIpEl) curIpEl.textContent = apiWorkspaceState.currentIp || '-';
+  const ips = apiWorkspaceState.allowedIps || [];
+  const selfAllowed = ips.some(i => Boolean(i.matchesCurrent) || i.ip === apiWorkspaceState.currentIp);
+
+  if (allowSelfBtn) {
+    if (selfAllowed) {
+      allowSelfBtn.textContent = '✓ Sudah Diizinkan';
+      allowSelfBtn.className = 'stat-subpill badge-green-soft font-mono';
+      allowSelfBtn.disabled = true;
+    } else {
+      allowSelfBtn.textContent = '+ Izinkan IP Ini';
+      allowSelfBtn.className = 'btn-stark-cta btn-sm-cta';
+      allowSelfBtn.disabled = false;
+    }
+  }
+
+  if (ipBadge) {
+    ipBadge.textContent = apiWorkspaceState.ipWhitelistEnabled ? 'AKTIF' : 'NONAKTIF';
+    ipBadge.className = `stat-subpill font-mono ${apiWorkspaceState.ipWhitelistEnabled ? 'badge-green-soft' : ''}`;
+  }
+  if (ipBtn) {
+    ipBtn.textContent = apiWorkspaceState.ipWhitelistEnabled ? 'Matikan' : 'Aktifkan';
+    ipBtn.className = `action-btn ${apiWorkspaceState.ipWhitelistEnabled ? 'danger' : 'primary'}`;
+  }
+
+  // Allowed IPs Table
+  const ipBody = document.getElementById('apiAllowedIpsBody');
+  if (ipBody) {
+    if (ips.length === 0) {
+      ipBody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 12px; color: var(--text-muted);">Belum ada IP terdaftar untuk API.</td></tr>';
+    } else {
+      ipBody.innerHTML = ips.map(item => {
+        const isCurrent = Boolean(item.matchesCurrent) || item.ip === apiWorkspaceState.currentIp;
+        return `
+          <tr>
+            <td style="font-weight: 700; color: var(--text-primary); font-size: 11px;">
+              ${escapeHTML(item.ip)}
+              ${isCurrent ? '<span class="stat-subpill badge-green-soft" style="font-size: 9.5px; margin-left: 5px;">INI</span>' : ''}
+            </td>
+            <td style="color: var(--text-secondary); font-size: 11px;">${escapeHTML(item.label || '-')}</td>
+            <td style="text-align: right;">
+              <button type="button" class="ep-btn danger" onclick="handleDeleteApiIp(${Number(item.id)}, '${escapeAttr(item.ip)}')">Hapus</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+  }
+
+  // Keys List
+  const keys = apiWorkspaceState.keys || [];
+  const countBadge = document.getElementById('apiKeysCountBadge');
+  if (countBadge) countBadge.textContent = `${keys.length} key`;
+
+  const keysList = document.getElementById('apiKeysList');
+  if (keysList) {
+    if (keys.length === 0) {
+      keysList.innerHTML = `
+        <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 12px;">
+          Belum ada API key. Klik <strong>+ Buat Key Baru</strong> untuk mulai mengotomatiskan deploy &amp; kontrol VM.
+        </div>
+      `;
+    } else {
+      keysList.innerHTML = keys.map(k => {
+        const isExpired = k.expiresAt && Date.now() > k.expiresAt;
+        let statusPill = '<span class="status-pill status-green font-mono">AKTIF</span>';
+        if (isExpired) statusPill = '<span class="status-pill status-rose font-mono">EXPIRED</span>';
+        else if (!k.enabled) statusPill = '<span class="status-pill status-neutral font-mono">PAUSED</span>';
+
+        const ipBadgeText = Array.isArray(k.allowedIps) && k.allowedIps.length > 0
+          ? `IP Lock: ${k.allowedIps.length} rule`
+          : 'Ikuti Firewall Global';
+        const accText = Array.isArray(k.allowedAccountIds) && !k.allowedAccountIds.includes('*')
+          ? `${k.allowedAccountIds.length} akun`
+          : 'Semua akun';
+        const lastUsedText = k.lastUsedAt
+          ? `${new Date(k.lastUsedAt).toLocaleString('id-ID')} · IP ${escapeHTML(k.lastUsedIp || '-')}`
+          : 'Belum pernah dipakai';
+        const expText = k.expiresAt
+          ? `Exp: ${new Date(k.expiresAt).toLocaleDateString('id-ID')}`
+          : 'Selamanya';
+
+        return `
+          <div class="api-key-card">
+            <div class="api-key-top">
+              <div class="api-key-title-wrap">
+                <span class="api-key-name">${escapeHTML(k.name)}</span>
+                <code class="api-key-prefix font-mono">${escapeHTML(k.keyPrefix)}</code>
+                ${statusPill}
+                ${k.requireHmac ? '<span class="status-pill status-amber font-mono">HMAC-SHA256</span>' : ''}
+              </div>
+              <div class="api-key-actions">
+                <button type="button" class="ep-btn" onclick="openApiKeyModal('${escapeAttr(k.id)}')">Edit</button>
+                <button type="button" class="ep-btn" onclick="toggleApiKeyEnabled('${escapeAttr(k.id)}', ${k.enabled ? 'false' : 'true'})">${k.enabled ? 'Pause' : 'Aktifkan'}</button>
+                <button type="button" class="ep-btn" onclick="rotateApiKeySecret('${escapeAttr(k.id)}', '${escapeAttr(k.name)}')">Rotate</button>
+                <button type="button" class="ep-btn danger" onclick="deleteApiKeyItem('${escapeAttr(k.id)}', '${escapeAttr(k.name)}')">Hapus</button>
+              </div>
+            </div>
+            <div class="api-key-badges font-mono">
+              <span class="stat-subpill">${escapeHTML(ipBadgeText)}</span>
+              <span class="stat-subpill">${escapeHTML(accText)}</span>
+              ${(k.scopes || []).map(sc => `<span class="stat-subpill badge-sky-soft">${escapeHTML(sc)}</span>`).join('')}
+            </div>
+            <div class="api-key-bottom font-mono">
+              <span>${Number(k.rateLimitRpm || 60)} req/mnt · Max ${k.maxDeployPerHour === 0 ? '∞' : k.maxDeployPerHour} VM/jam · ≤${k.maxVcpuPerVm || 8} vCPU · ${escapeHTML(expText)}</span>
+              <span>${Number(k.requestCount || 0)} req · ${lastUsedText}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // Request Logs
+  const logsBody = document.getElementById('apiLogsTableBody');
+  const logs = apiWorkspaceState.logs || [];
+  if (logsBody) {
+    if (logs.length === 0) {
+      logsBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 14px; color: var(--text-muted);">Belum ada request masuk ke /api/v1.</td></tr>';
+    } else {
+      logsBody.innerHTML = logs.map(log => {
+        const timeStr = new Date(log.timestamp).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const st = Number(log.status_code || 0);
+        const cls = st >= 500 || st === 401 || st === 403 ? 'status-rose' : (st >= 400 ? 'status-amber' : 'status-green');
+        const keyLabel = escapeHTML(log.key_name || '—');
+        const ipLabel = escapeHTML(log.ip || '-');
+        return `
+          <tr>
+            <td class="api-log-time-cell" style="font-size: 10.5px; color: var(--text-muted);">${escapeHTML(timeStr)}</td>
+            <td class="api-log-hide-mob" style="font-size: 11px; font-weight: 700;">${keyLabel}</td>
+            <td style="font-size: 11px; word-break: break-word;">
+              <div><strong>${escapeHTML(log.method)}</strong> ${escapeHTML(log.path)}</div>
+              <div class="api-log-mob-meta">${keyLabel} · ${ipLabel}</div>
+            </td>
+            <td class="api-log-hide-mob" style="font-size: 11px; color: var(--text-secondary); white-space: nowrap;">${ipLabel}</td>
+            <td style="text-align: right; white-space: nowrap;"><span class="status-pill ${cls}" style="font-size: 10px;">${st}</span></td>
+          </tr>
+        `;
+      }).join('');
+    }
+  }
+}
+
+function copyApiBaseUrl() {
+  copyToClipboard(getApiBaseUrl(), 'Base URL API tersalin!');
+}
+
+function switchApiDocTab(tab) {
+  apiWorkspaceState.activeDocTab = tab;
+  ['create', 'control', 'hmac'].forEach(t => {
+    const btn = document.getElementById(`apiDocTabBtn-${t}`);
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
+  renderApiDocSnippet();
+}
+
+function renderApiDocSnippet() {
+  const base = getApiBaseUrl();
+  const titleEl = document.getElementById('apiDocTitleLabel');
+  const boxEl = document.getElementById('apiDocCodeBox');
+  if (!boxEl) return;
+
+  const tab = apiWorkspaceState.activeDocTab || 'create';
+  if (tab === 'create') {
+    if (titleEl) titleEl.textContent = 'POST /api/v1/vms (Generate VM + Auto SSH + Always-On)';
+    boxEl.textContent = `curl -X POST "${base}/vms" \\
+  -H "Authorization: Bearer bfk_live_YOUR_KEY" \\
+  -H "Idempotency-Key: deploy-vm-001" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "worker-01",
+    "vcpu": 2,
+    "memory": "8G",
+    "region": "fra",
+    "preset": "always_on",
+    "autoGenerateSshPassword": true,
+    "autoSetup": { "enableAutoUpdate": true }
+  }'`;
+  } else if (tab === 'control') {
+    if (titleEl) titleEl.textContent = 'POST /api/v1/vms/:id/exec & /action';
+    boxEl.textContent = `# Jalankan perintah di dalam VM
+curl -X POST "${base}/vms/VM_ID/exec" \\
+  -H "X-API-Key: bfk_live_YOUR_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "command": "uptime && uname -a" }'
+
+# Kontrol lifecycle: start | stop | resume | pause | hibernate | reboot
+curl -X POST "${base}/vms/VM_ID/action" \\
+  -H "X-API-Key: bfk_live_YOUR_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "action": "reboot" }'`;
+  } else {
+    if (titleEl) titleEl.textContent = 'Keamanan Extra: HMAC-SHA256 Anti-Replay';
+    boxEl.textContent = `TS=$(date +%s)
+BODY='{"vcpu":1,"memory":"4G","preset":"always_on"}'
+BODY_HASH=$(printf "%s" "$BODY" | sha256sum | awk '{print $1}')
+CANON="\${TS}.POST./api/v1/vms.\${BODY_HASH}"
+SIG=$(printf "%s" "$CANON" | openssl dgst -sha256 -hmac "bfk_sec_YOUR_SECRET" | awk '{print $2}')
+
+curl -X POST "${base}/vms" \\
+  -H "Authorization: Bearer bfk_live_YOUR_KEY" \\
+  -H "X-API-Timestamp: $TS" \\
+  -H "X-API-Signature: $SIG" \\
+  -H "Content-Type: application/json" -d "$BODY"`;
+  }
+}
+
+function copyApiDocSnippet() {
+  const boxEl = document.getElementById('apiDocCodeBox');
+  if (boxEl) copyToClipboard(boxEl.textContent, 'Contoh API tersalin!');
+}
+
+async function toggleApiMasterSwitch() {
+  const next = !apiWorkspaceState.apiEnabled;
+  try {
+    const res = await apiFetch('/api/security/api-config/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(next ? 'API eksternal (/api/v1) diaktifkan.' : 'API eksternal (/api/v1) dimatikan.', 'info');
+      loadApiWorkspace();
+    } else {
+      showToast(data.error || 'Gagal mengubah status API', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function toggleApiIpFirewall() {
+  const next = !apiWorkspaceState.ipWhitelistEnabled;
+  try {
+    const res = await apiFetch('/api/security/api-ips/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(next ? 'API Allowed IP Firewall aktif — hanya IP terdaftar yang bisa akses /api/v1.' : 'API Allowed IP Firewall dimatikan.', 'info');
+      loadApiWorkspace();
+    } else {
+      showToast(data.error || 'Gagal mengubah filter IP API', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function allowMyApiIp() {
+  try {
+    const res = await apiFetch('/api/security/api-ips/allow-my-ip', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`IP ${data.currentIp} diizinkan untuk API!`, 'success');
+      loadApiWorkspace();
+    } else {
+      showToast(data.error || 'Gagal mendaftarkan IP', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function handleAddApiAllowedIp(e) {
+  e.preventDefault();
+  const ipEl = document.getElementById('newApiIpInput');
+  const lblEl = document.getElementById('newApiIpLabel');
+  if (!ipEl || !ipEl.value.trim()) return;
+  try {
+    const res = await apiFetch('/api/security/api-ips', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ipEl.value.trim(), label: lblEl ? lblEl.value.trim() : '' })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`IP ${ipEl.value.trim()} ditambahkan ke API Allowed IP.`, 'success');
+      ipEl.value = '';
+      if (lblEl) lblEl.value = '';
+      loadApiWorkspace();
+    } else {
+      showToast(data.error || 'Gagal menambah IP', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function handleDeleteApiIp(id, ip) {
+  if (!confirm(`Hapus ${ip} dari daftar API Allowed IP?`)) return;
+  try {
+    const res = await apiFetch(`/api/security/api-ips/${Number(id)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`IP ${ip} dihapus dari API Allowed IP.`, 'info');
+      loadApiWorkspace();
+    } else {
+      showToast(data.error || 'Gagal menghapus IP', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+function renderApiKeyModalAccounts(selectedIds = ['*']) {
+  const allCheck = document.getElementById('akAllAccountsCheck');
+  const container = document.getElementById('akAccountsList');
+  if (!allCheck || !container) return;
+
+  const isAll = !Array.isArray(selectedIds) || selectedIds.length === 0 || selectedIds.includes('*');
+  allCheck.checked = isAll;
+  container.classList.toggle('hidden', isAll);
+
+  const selectedSet = new Set(isAll ? [] : selectedIds);
+  const accounts = appState.accounts || [];
+  container.innerHTML = accounts.map(acc => `
+    <label class="api-check-pill">
+      <input type="checkbox" name="akAccountId" value="${escapeAttr(acc.id)}" ${selectedSet.has(acc.id) ? 'checked' : ''}>
+      <span>${escapeHTML(acc.label)}</span>
+    </label>
+  `).join('') || '<span class="text-muted font-mono" style="font-size: 11px;">Belum ada akun terdaftar.</span>';
+}
+
+function onAkAllAccountsToggle() {
+  const allCheck = document.getElementById('akAllAccountsCheck');
+  const container = document.getElementById('akAccountsList');
+  if (allCheck && container) {
+    container.classList.toggle('hidden', allCheck.checked);
+  }
+}
+
+function applyApiScopePreset(preset) {
+  let scopes = ['vm:read', 'vm:create', 'vm:control'];
+  if (preset === 'full') scopes = ['vm:read', 'vm:create', 'vm:control', 'vm:exec', 'vm:delete'];
+  else if (preset === 'readonly') scopes = ['vm:read'];
+  const set = new Set(scopes);
+  document.querySelectorAll('input[name="akScope"]').forEach(cb => {
+    cb.checked = set.has(cb.value);
+  });
+}
+
+function openApiKeyModal(keyId = null) {
+  const modal = document.getElementById('apiKeyModal');
+  if (!modal) return;
+
+  const existing = keyId ? (apiWorkspaceState.keys || []).find(k => k.id === keyId) : null;
+  document.getElementById('apiKeyEditId').value = existing ? existing.id : '';
+  document.getElementById('apiKeyModalTitle').textContent = existing ? `Edit API Key: ${existing.name}` : 'Buat API Key Baru';
+  document.getElementById('akNameInput').value = existing ? existing.name : '';
+  document.getElementById('akAllowedIpsInput').value = existing && Array.isArray(existing.allowedIps) ? existing.allowedIps.join('\n') : '';
+  document.getElementById('akRequireHmacCheckbox').checked = existing ? !!existing.requireHmac : false;
+  document.getElementById('akRateLimitInput').value = existing ? (existing.rateLimitRpm || 60) : 60;
+  document.getElementById('akMaxDeployInput').value = existing && existing.maxDeployPerHour !== undefined ? existing.maxDeployPerHour : 10;
+  document.getElementById('akMaxVcpuInput').value = String(existing ? (existing.maxVcpuPerVm || 8) : 8);
+  document.getElementById('akExpiresSelect').value = 'never';
+
+  const activeScopes = new Set(existing && Array.isArray(existing.scopes) ? existing.scopes : ['vm:read', 'vm:create', 'vm:control']);
+  document.querySelectorAll('input[name="akScope"]').forEach(cb => {
+    cb.checked = activeScopes.has(cb.value);
+  });
+
+  renderApiKeyModalAccounts(existing ? existing.allowedAccountIds : ['*']);
+  modal.classList.remove('hidden');
+}
+
+function closeApiKeyModal() {
+  const modal = document.getElementById('apiKeyModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function openApiSecretRevealModal({ title, rawKey, rawHmacSecret }) {
+  const modal = document.getElementById('apiSecretRevealModal');
+  if (!modal) return;
+  document.getElementById('apiRevealTitle').textContent = title || 'API Key Siap Digunakan';
+
+  const keyGroup = document.getElementById('revealRawKeyGroup');
+  const keyVal = document.getElementById('revealRawKeyVal');
+  if (rawKey) {
+    keyGroup.classList.remove('hidden');
+    keyVal.textContent = rawKey;
+  } else {
+    keyGroup.classList.add('hidden');
+  }
+
+  const hmacGroup = document.getElementById('revealRawHmacGroup');
+  const hmacVal = document.getElementById('revealRawHmacVal');
+  if (rawHmacSecret) {
+    hmacGroup.classList.remove('hidden');
+    hmacVal.textContent = rawHmacSecret;
+  } else {
+    hmacGroup.classList.add('hidden');
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function closeApiSecretRevealModal() {
+  const modal = document.getElementById('apiSecretRevealModal');
+  if (modal) modal.classList.add('hidden');
+  document.getElementById('revealRawKeyVal').textContent = '-';
+  document.getElementById('revealRawHmacVal').textContent = '-';
+}
+
+async function handleSaveApiKey(e) {
+  e.preventDefault();
+  const editId = document.getElementById('apiKeyEditId').value.trim();
+  const scopes = Array.from(document.querySelectorAll('input[name="akScope"]:checked')).map(cb => cb.value);
+  const allAccounts = document.getElementById('akAllAccountsCheck').checked;
+  const allowedAccountIds = allAccounts
+    ? ['*']
+    : Array.from(document.querySelectorAll('input[name="akAccountId"]:checked')).map(cb => cb.value);
+
+  const payload = {
+    name: document.getElementById('akNameInput').value.trim(),
+    scopes,
+    allowedAccountIds,
+    allowedIps: document.getElementById('akAllowedIpsInput').value,
+    requireHmac: document.getElementById('akRequireHmacCheckbox').checked,
+    rateLimitRpm: parseInt(document.getElementById('akRateLimitInput').value, 10) || 60,
+    maxDeployPerHour: parseInt(document.getElementById('akMaxDeployInput').value, 10),
+    maxVcpuPerVm: parseInt(document.getElementById('akMaxVcpuInput').value, 10) || 8
+  };
+
+  const expiresChoice = document.getElementById('akExpiresSelect').value;
+  if (!editId || expiresChoice !== 'never') {
+    payload.expiresDays = expiresChoice;
+  }
+
+  const saveBtn = document.getElementById('akSaveBtn');
+  saveBtn.disabled = true;
+  try {
+    const url = editId ? `/api/api-keys/${encodeURIComponent(editId)}` : '/api/api-keys';
+    const method = editId ? 'PATCH' : 'POST';
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      closeApiKeyModal();
+      await loadApiWorkspace();
+      if (data.rawKey || data.rawHmacSecret) {
+        openApiSecretRevealModal({
+          title: editId ? 'HMAC Secret Baru Dibuat' : 'API Key Baru Berhasil Dibuat',
+          rawKey: data.rawKey || null,
+          rawHmacSecret: data.rawHmacSecret || null
+        });
+      } else {
+        showToast('Pengaturan API Key berhasil diperbarui.', 'success');
+      }
+    } else {
+      showToast(data.error || 'Gagal menyimpan API Key', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+async function toggleApiKeyEnabled(keyId, nextEnabled) {
+  try {
+    const res = await apiFetch(`/api/api-keys/${encodeURIComponent(keyId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !!nextEnabled })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(nextEnabled ? 'API Key diaktifkan.' : 'API Key dijeda.', 'info');
+      loadApiWorkspace();
+    } else {
+      showToast(data.error || 'Gagal mengubah status key', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function rotateApiKeySecret(keyId, name) {
+  if (!confirm(`Rotate key "${name}"?\nKey lama akan langsung tidak berlaku begitu diganti.`)) return;
+  try {
+    const res = await apiFetch(`/api/api-keys/${encodeURIComponent(keyId)}/rotate`, { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      await loadApiWorkspace();
+      openApiSecretRevealModal({
+        title: `Key "${name}" Berhasil Di-rotate`,
+        rawKey: data.rawKey,
+        rawHmacSecret: data.rawHmacSecret
+      });
+    } else {
+      showToast(data.error || 'Gagal rotate key', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
+}
+
+async function deleteApiKeyItem(keyId, name) {
+  if (!confirm(`Hapus permanen API Key "${name}"? Semua script yang memakai key ini akan langsung gagal.`)) return;
+  try {
+    const res = await apiFetch(`/api/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`API Key "${name}" dihapus.`, 'info');
+      loadApiWorkspace();
+    } else {
+      showToast(data.error || 'Gagal menghapus key', 'error');
+    }
+  } catch (err) {
+    showToast('Koneksi gagal: ' + err.message, 'error');
+  }
 }

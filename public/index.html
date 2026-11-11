@@ -7,18 +7,24 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=20261110v">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%233B82F6'/%3E%3Cpath d='M6 12h12M12 6v12' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
 </head>
 <body>
   <!-- MAIN APP CONTAINER -->
-  <div id="appContainer" class="window-shell">
+  <div id="appContainer" class="window-shell hidden">
 
     <!-- LEFT SIDEBAR -->
     <aside class="sidebar">
       <div class="sidebar-brand" onclick="switchTab('overview')">
         <div style="display: flex; align-items: center; gap: 10px;">
-          <div class="brand-square-logo"></div>
+          <div class="brand-square-logo" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+              <path d="m3.3 7 8.7 5 8.7-5"/>
+              <path d="M12 22V12"/>
+            </svg>
+          </div>
           <div class="sb-title-wrap">
             <span class="sb-brand-main">BOXD</span>
             <span class="sb-brand-sub">FLEET</span>
@@ -75,6 +81,15 @@
           </svg>
           <span>Tarif</span>
         </a>
+
+        <a href="#api" class="nav-item" id="tabBtn-api" onclick="switchTab('api')">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+            <line x1="14" y1="4" x2="10" y2="20"/>
+          </svg>
+          <span>API</span>
+        </a>
       </nav>
 
       <div class="sidebar-footer">
@@ -117,8 +132,14 @@
             </select>
           </div>
 
-          <button class="theme-toggle-btn font-mono" id="themeToggleBtn" onclick="toggleNeoTheme()" aria-label="Toggle Theme" title="Ganti Tema">
-            <span id="themeToggleIcon">☀️</span><span id="themeToggleLabel" class="theme-toggle-lbl">LIGHT</span>
+          <button class="live-sync-pill is-live font-mono" id="liveSyncToggleBtn" onclick="toggleLiveAutoRefresh()" aria-label="Toggle Auto Refresh" title="Auto-refresh otomatis tiap 15 detik">
+            <span class="pulse-indicator-green" id="liveSyncDot"></span>
+            <span id="liveSyncLabel">Live</span>
+          </button>
+
+          <button class="theme-toggle-btn" id="themeToggleBtn" onclick="toggleNeoTheme()" aria-label="Toggle Theme" title="Ganti Tema">
+            <span id="themeToggleIcon" class="theme-toggle-svg" aria-hidden="true"></span>
+            <span id="themeToggleLabel" class="theme-toggle-lbl">Light</span>
           </button>
 
           <button class="icon-utility-btn" id="syncTelemetryBtn" onclick="fetchDashboardData()" aria-label="Sync" title="Refresh data">
@@ -152,53 +173,54 @@
           <div class="stat-card">
             <div class="stat-content">
               <span class="stat-label">QUOTA</span>
-              <div class="stat-value-row">
-                <span class="stat-value font-mono" id="overviewStatQuota">—</span>
-                <span class="stat-subpill badge-green-soft font-mono" id="overviewStatQuotaBadge">—</span>
-              </div>
+              <span class="stat-value font-mono" id="overviewStatQuota">—</span>
+              <span class="stat-subtext font-mono" id="overviewStatQuotaBadge">—</span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-content">
               <span class="stat-label">COMPUTE</span>
-              <div class="stat-value-row">
-                <span class="stat-value font-mono" id="overviewStatVcpu">—</span>
-                <span class="stat-subpill font-mono" id="overviewStatRamBadge">—</span>
-              </div>
+              <span class="stat-value font-mono" id="overviewStatVcpu">—</span>
+              <span class="stat-subtext font-mono" id="overviewStatRamBadge">—</span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-content">
               <span class="stat-label">SALDO</span>
-              <div class="stat-value-row">
-                <span class="stat-value font-mono text-emerald" id="statBalance">$0.00</span>
-                <span class="stat-subpill font-mono" id="overviewStatAccBadge">—</span>
-              </div>
+              <span class="stat-value font-mono text-emerald" id="statBalance">$0.00</span>
+              <span class="stat-subtext font-mono" id="overviewStatAccBadge">—</span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-content">
               <span class="stat-label">PEMAKAIAN</span>
-              <div class="stat-value-row">
-                <span class="stat-value font-mono" id="overviewStatSpend">$0.00</span>
-                <span class="stat-subpill font-mono">Total</span>
-              </div>
+              <span class="stat-value font-mono" id="overviewStatSpend">$0.00</span>
+              <span class="stat-subtext font-mono">Total akumulasi</span>
             </div>
           </div>
         </section>
 
-        <section class="dashboard-row" style="margin-top: 14px;">
-          <div class="content-card overview-fleet-card">
+        <section class="dashboard-row grid-2-col overview-summary-grid" style="margin-top: 14px;">
+          <div class="content-card overview-summary-card">
             <div class="card-header">
-              <h2 class="card-title">Fleet Instances</h2>
-              <a href="#machines" class="card-action-link" onclick="switchTab('machines')">Semua VM →</a>
+              <h2 class="card-title">Status Fleet</h2>
+              <a href="#machines" class="card-action-link" onclick="openMachinesWithFilter('all')">Semua VM →</a>
             </div>
-            <div id="overviewScopeNotice" class="hidden"></div>
-            <div class="project-list" id="overviewMachinesList">
-              <div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">Memuat data fleet...</div>
+            <div class="overview-panel-body" id="overviewFleetStatusBody">
+              <div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">Memuat ringkasan fleet…</div>
+            </div>
+          </div>
+
+          <div class="content-card overview-summary-card">
+            <div class="card-header">
+              <h2 class="card-title">Ringkasan Akun</h2>
+              <a href="#accounts" class="card-action-link" onclick="switchTab('accounts')">Kelola Akun →</a>
+            </div>
+            <div class="overview-panel-body" id="overviewAccountsSummaryBody">
+              <div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">Memuat data akun…</div>
             </div>
           </div>
         </section>
@@ -219,16 +241,32 @@
                 <option value="hibernated">Hibernated</option>
                 <option value="suspended">Standby</option>
                 <option value="stopped">Stopped</option>
-                <option value="private">Private (Read-Only)</option>
               </select>
             </div>
             <button class="btn-stark-cta" onclick="openNewMachineModal()">+ Deploy VM</button>
           </div>
         </div>
 
-        <div id="machinesScopeNotice" class="hidden"></div>
+        <div id="machinesAutoUpdateBanner" class="fleet-autoupdate-banner hidden">
+          <div style="min-width: 0; flex: 1;">
+            <div style="font-size: 12px; font-weight: 800; color: var(--text-primary);">
+              <span id="fleetAutoUpdPendingCount">0</span> VM belum mengaktifkan Auto-Update &amp; cache APT
+            </div>
+            <div class="font-mono text-muted" style="font-size: 10.5px; margin-top: 2px;">
+              Image bawaan VM kosong cache APT-nya (apt install bisa gagal sebelum update). Aktifkan sekali klik biar semua VM langsung siap pakai.
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="fleetPrepareAutoUpdBtn" class="btn-stark-cta btn-sm-cta" onclick="handleBatchPrepareAutoUpdate(false)">
+              ⚡ Aktifkan Auto-Update Semua
+            </button>
+            <button type="button" id="fleetUpgradeAllBtn" class="action-btn" onclick="handleBatchPrepareAutoUpdate(true)">
+              + Upgrade OS Semua
+            </button>
+          </div>
+        </div>
 
-        <div id="machinesGrid" class="machines-grid"></div>
+        <div id="machinesGrid" class="machines-collections"></div>
 
         <div id="emptyMachinesState" class="empty-state hidden">
           <div class="es-box">
@@ -258,19 +296,20 @@
             <div class="guide-body">
               <div class="guide-code-box">
                 <div class="guide-code-head">
-                  <span class="guide-code-title">Terminal SSH</span>
-                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('ssh -p <PORT> root@<region>.boxd.sh', 'Perintah SSH disalin')">Copy</button>
+                  <span class="guide-code-title">Terminal SSH (Password)</span>
+                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('ssh -p <PORT> root@<nama-vm>.boxd.sh', 'Perintah SSH disalin')">Copy</button>
                 </div>
-                <pre class="font-mono guide-code">ssh -p &lt;PORT&gt; root@&lt;region&gt;.boxd.sh</pre>
-                <small class="text-dim">Region tersedia: <code>fra.boxd.sh</code> atau <code>nyc.boxd.sh</code></small>
+                <pre class="font-mono guide-code">ssh -p &lt;PORT&gt; root@&lt;nama-vm&gt;.boxd.sh</pre>
               </div>
+              <p class="guide-p">Klik tombol <code>Set Pass</code> di kartu VM untuk atur password &amp; dapatkan port SSH langsung.</p>
 
               <div class="guide-code-box">
                 <div class="guide-code-head">
                   <span class="guide-code-title">Transfer File (SCP)</span>
-                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('scp -P <PORT> script.py root@<region>.boxd.sh:/root/', 'Perintah SCP disalin')">Copy</button>
+                  <button type="button" class="btn-copy-sm" onclick="copyToClipboard('scp -P <PORT> script.py root@<nama-vm>.boxd.sh:/root/', 'Perintah SCP disalin')">Copy</button>
                 </div>
-                <pre class="font-mono guide-code">scp -P &lt;PORT&gt; script.py root@&lt;region&gt;.boxd.sh:/root/</pre>
+                <pre class="font-mono guide-code">scp -P &lt;PORT&gt; script.py \
+  root@&lt;nama-vm&gt;.boxd.sh:/root/</pre>
               </div>
 
               <div class="guide-tip-box">
@@ -284,7 +323,7 @@
               <h2 class="card-title">2. Deploy MicroVM</h2>
             </div>
             <div class="guide-body">
-              <div class="guide-code-box">
+              <div class="guide-info-box">
                 <span class="guide-code-title">Lewat Dashboard</span>
                 <p class="guide-p">Buka tab <strong>Machines</strong> lalu klik <strong>+ Deploy VM</strong> untuk pilih akun, region, dan ukuran vCPU/RAM.</p>
               </div>
@@ -294,7 +333,8 @@
                   <span class="guide-code-title">Lewat CLI</span>
                   <button type="button" class="btn-copy-sm" onclick="copyToClipboard('boxd machine new my-vm --vcpu 2 --memory 4G --region fra --shared', 'Perintah CLI disalin')">Copy</button>
                 </div>
-                <pre class="font-mono guide-code">boxd machine new my-vm --vcpu 2 --memory 4G --region fra --shared</pre>
+                <pre class="font-mono guide-code">boxd machine new my-vm \
+  --vcpu 2 --memory 4G --region fra --shared</pre>
               </div>
 
               <div class="guide-tip-box">
@@ -305,14 +345,17 @@
 
           <div class="content-card">
             <div class="card-header">
-              <h2 class="card-title">3. Hemat Saldo</h2>
+              <h2 class="card-title">3. Hemat Saldo &amp; Always-On</h2>
             </div>
             <div class="guide-body">
               <ul class="guide-bullet-list">
                 <li><strong>Running:</strong> Dihitung per detik untuk vCPU, RAM, dan storage.</li>
                 <li><strong>Hibernated / Stopped:</strong> Biaya vCPU &amp; RAM <strong>$0</strong>, hanya kena biaya storage NVMe.</li>
-                <li><strong>Tips:</strong> Aktifkan <strong>Auto-Suspend</strong> saat deploy atau klik <strong>Hibernate</strong> setelah selesai pakai.</li>
+                <li><strong>Mode Sepuasnya:</strong> Pilih preset <strong>Sepuasnya (Always-On)</strong> saat deploy atau lewat tombol <strong>Kelola</strong> di kartu VM untuk mematikan auto-sleep, membuka akses API/webhook, dan mengaktifkan <strong>Auto-Update</strong>.</li>
               </ul>
+              <div class="guide-tip-box" style="margin-top: auto;">
+                Gunakan tab <strong>Sepuasnya &amp; Spek</strong> di menu <strong>Kelola</strong> untuk ubah timer idle atau resize vCPU/RAM kapan saja tanpa hapus VM.
+              </div>
             </div>
           </div>
 
@@ -328,7 +371,14 @@
                 </div>
                 <pre class="font-mono guide-code">https://&lt;nama-vm&gt;.&lt;region&gt;.boxd.sh</pre>
               </div>
-              <p class="guide-p">Jalankan server di port <code>80</code> atau <code>3000</code> dalam VM agar trafik langsung diteruskan ke URL tersebut.</p>
+              <p class="guide-p">Jalankan server di port <code>80</code> atau <code>3000</code> dalam VM agar trafik langsung diteruskan ke URL HTTPS otomatis.</p>
+              <div class="guide-info-box">
+                <div class="guide-code-head">
+                  <span class="guide-code-title">Subdomain &amp; Port Forward</span>
+                  <span class="guide-code-title" style="color: var(--text-secondary);">Kelola → Port &amp; Web</span>
+                </div>
+                <p class="guide-p">Tambah subdomain HTTPS khusus seperti <code>api.&lt;vm&gt;</code> atau buka hingga 3 port TCP/UDP langsung dari menu <strong>Kelola</strong>.</p>
+              </div>
             </div>
           </div>
 
@@ -341,7 +391,7 @@
                 <table class="telemetry-table guide-cli-table" style="font-size: 11.5px;">
                   <thead>
                     <tr>
-                      <th style="width: 38%;">Command</th>
+                      <th style="width: 34%;">Perintah</th>
                       <th>Fungsi</th>
                     </tr>
                   </thead>
@@ -356,7 +406,7 @@
                     </tr>
                     <tr>
                       <td><code>boxd machine stop &lt;name&gt;</code></td>
-                      <td>Hentikan VM untuk menghentikan charge vCPU/RAM</td>
+                      <td>Hentikan VM untuk menyetop biaya vCPU &amp; RAM</td>
                     </tr>
                     <tr>
                       <td><code>boxd machine ssh &lt;name&gt;</code></td>
@@ -383,20 +433,9 @@
         <div class="sub-view-header">
           <div>
             <h1 class="clean-heading">Accounts</h1>
-            <p class="clean-subheading">Kelola API key, saldo, dan kuota tiap akun Boxd.</p>
+            <p class="clean-subheading"><strong id="accountsCountPill">0 akun</strong> · Kelola API key, saldo, dan kuota tiap akun Boxd.</p>
           </div>
           <button class="btn-stark-cta" onclick="openAddAccountModal()">+ Tambah Akun</button>
-        </div>
-
-        <div class="filter-bar-accounts">
-          <div class="search-box">
-            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8"/>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input type="text" id="accountSearchInput" placeholder="Cari nama akun atau org..." oninput="filterAccountsHub()">
-          </div>
-          <span class="font-mono text-dim" id="accountsCountPill" style="font-size: 11px; font-weight: 700;">0 akun</span>
         </div>
 
         <div id="accountsHubGrid" class="accounts-grid"></div>
@@ -409,7 +448,7 @@
             <h1 class="clean-heading">Tarif & Pemakaian</h1>
             <p class="clean-subheading">Tarif per jam dan rincian biaya tiap microVM.</p>
           </div>
-          <button class="btn-secondary-sm" onclick="fetchTelemetryData()">↻ Refresh</button>
+          <button type="button" class="stat-subpill badge-green-soft font-mono telem-sync-btn" id="telemLastSyncedBadge" onclick="fetchTelemetryData()" title="Klik untuk sinkronkan ulang data pemakaian">Synced</button>
         </div>
 
         <div class="rates-overview-grid">
@@ -446,21 +485,21 @@
           </div>
         </div>
 
-        <div class="content-card" style="margin-top: 14px; padding: 0; overflow: hidden;">
+        <div class="content-card telem-table-card" style="margin-top: 14px; padding: 0; overflow: hidden;">
           <div class="card-header" style="padding: 14px 18px 12px 18px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 0;">
             <h2 class="card-title">Pemakaian VM</h2>
-            <span class="stat-subpill badge-green-soft font-mono" id="telemLastSyncedBadge">Synced</span>
+            <span class="font-mono text-muted" style="font-size: 11px;" id="telemRowCountMeta">-</span>
           </div>
-          <div style="overflow-x: auto;">
-            <table class="telemetry-table">
+          <div class="telemetry-table-wrap">
+            <table class="telemetry-table telemetry-responsive-table">
               <thead>
                 <tr>
                   <th>VM</th>
                   <th>STATUS / REGION</th>
                   <th>SPEK</th>
-                  <th>UPTIME</th>
-                  <th class="num">vCPU·HR</th>
-                  <th class="num">RAM GIB·HR</th>
+                  <th class="num">UPTIME</th>
+                  <th class="num no-upper">vCPU·hr</th>
+                  <th class="num no-upper">RAM GiB·hr</th>
                   <th class="num">BIAYA</th>
                 </tr>
               </thead>
@@ -468,6 +507,145 @@
             </table>
           </div>
         </div>
+      </div>
+
+      <!-- ================= TAB 6: API & OTOMASI ================= -->
+      <div id="tabContent-api" class="tab-content">
+        <div class="sub-view-header">
+          <div>
+            <h1 class="clean-heading">API &amp; Otomasi</h1>
+            <p class="clean-subheading">Kelola API key, Allowed IP khusus API, proteksi HMAC anti-replay, dan generate microVM otomatis.</p>
+          </div>
+          <div class="filter-controls-row">
+            <div class="api-master-pill">
+              <span class="api-master-label">API</span>
+              <span id="apiMasterStatusBadge" class="stat-subpill badge-green-soft font-mono">AKTIF</span>
+              <button type="button" id="apiMasterToggleBtn" class="action-btn danger" onclick="toggleApiMasterSwitch()" style="height: 28px; padding: 0 10px; font-size: 10.5px;">Matikan</button>
+            </div>
+            <button type="button" class="btn-stark-cta" onclick="openApiKeyModal()">+ Buat API Key</button>
+          </div>
+        </div>
+
+        <!-- 2-COLUMN WORKSPACE: API ALLOWED IP + SNIPPET DOCS -->
+        <section class="grid-2-col api-top-grid" style="margin-bottom: 14px;">
+          <!-- LEFT: API ALLOWED IP & FIREWALL -->
+          <div class="content-card api-panel-card">
+            <div class="card-header" style="margin-bottom: 10px;">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <h2 class="card-title">API Allowed IP &amp; Firewall</h2>
+                <span id="apiIpStatusBadge" class="stat-subpill font-mono">NONAKTIF</span>
+              </div>
+              <button type="button" id="apiIpToggleBtn" class="action-btn primary" onclick="toggleApiIpFirewall()" style="height: 28px; padding: 0 10px; font-size: 10.5px;">Aktifkan</button>
+            </div>
+
+            <div class="api-endpoint-bar">
+              <div style="min-width: 0; overflow: hidden;">
+                <span class="api-endpoint-label">ENDPOINT BASE URL</span>
+                <div id="apiBaseUrlDisplay" class="font-mono api-endpoint-url">/api/v1</div>
+              </div>
+              <button type="button" class="ep-btn" onclick="copyApiBaseUrl()">Copy URL</button>
+            </div>
+
+            <div class="sec-current-ip-bar" style="margin-bottom: 10px;">
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;">
+                <span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); white-space: nowrap;">IP Kamu:</span>
+                <strong id="apiCurrentIpDisplay" class="font-mono" style="color: var(--text-primary); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-</strong>
+              </div>
+              <button type="button" id="apiAllowMyIpBtn" class="btn-stark-cta btn-sm-cta" onclick="allowMyApiIp()">+ Izinkan IP Ini</button>
+            </div>
+
+            <form onsubmit="handleAddApiAllowedIp(event)" class="sec-ip-form" style="margin-bottom: 10px;">
+              <input type="text" id="newApiIpInput" class="form-input font-mono" placeholder="IPv4 / IPv6 / CIDR" required>
+              <input type="text" id="newApiIpLabel" class="form-input" placeholder="Label (misal: VPS)">
+              <button type="submit" class="action-btn primary" style="height: 36px; padding: 0 14px; font-size: 11px;">+ Tambah</button>
+            </form>
+
+            <div class="audit-log-table-wrap" style="max-height: 195px;">
+              <table class="audit-table font-mono">
+                <thead>
+                  <tr>
+                    <th style="width: 44%;">Allowed IP / CIDR</th>
+                    <th style="width: 34%;">Label</th>
+                    <th style="width: 22%; text-align: right;">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="apiAllowedIpsBody">
+                  <tr><td colspan="3" style="text-align: center; padding: 12px;">Memuat...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- RIGHT: INTERACTIVE DOCS & EXAMPLES -->
+          <div class="content-card api-panel-card">
+            <div class="card-header" style="margin-bottom: 10px; gap: 8px; flex-wrap: wrap;">
+              <h2 class="card-title">Dokumentasi &amp; Contoh API</h2>
+              <div class="api-doc-tabs">
+                <button type="button" id="apiDocTabBtn-create" class="api-doc-tab active" onclick="switchApiDocTab('create')">Generate VM</button>
+                <button type="button" id="apiDocTabBtn-control" class="api-doc-tab" onclick="switchApiDocTab('control')">Action &amp; Exec</button>
+                <button type="button" id="apiDocTabBtn-hmac" class="api-doc-tab" onclick="switchApiDocTab('hmac')">HMAC Extra</button>
+              </div>
+            </div>
+
+            <div class="api-code-wrap">
+              <div class="api-code-topbar">
+                <span class="font-mono" id="apiDocTitleLabel">POST /api/v1/vms</span>
+                <button type="button" class="ep-btn" onclick="copyApiDocSnippet()">Copy Snippet</button>
+              </div>
+              <pre id="apiDocCodeBox" class="api-code-box font-mono"></pre>
+            </div>
+
+            <div class="api-routes-chips font-mono">
+              <span class="api-route-chip"><b>GET</b> /me</span>
+              <span class="api-route-chip"><b>GET</b> /accounts</span>
+              <span class="api-route-chip"><b>GET</b> /vms</span>
+              <span class="api-route-chip"><b>POST</b> /vms</span>
+              <span class="api-route-chip"><b>POST</b> /vms/:id/action</span>
+              <span class="api-route-chip"><b>POST</b> /vms/:id/exec</span>
+              <span class="api-route-chip"><b>POST</b> /vms/:id/ssh-password</span>
+              <span class="api-route-chip"><b>POST</b> /vms/:id/ports</span>
+              <span class="api-route-chip"><b>DELETE</b> /vms/:id</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- API KEYS LIST -->
+        <section class="content-card" style="margin-bottom: 14px;">
+          <div class="card-header" style="margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 class="card-title">Daftar API Keys</h2>
+              <span id="apiKeysCountBadge" class="stat-subpill font-mono">0 key</span>
+            </div>
+            <button type="button" class="action-btn primary" onclick="openApiKeyModal()">+ Buat Key Baru</button>
+          </div>
+          <div id="apiKeysList" class="api-keys-list">
+            <div style="padding: 18px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">Memuat API keys...</div>
+          </div>
+        </section>
+
+        <!-- RECENT API REQUEST LOGS -->
+        <section class="content-card">
+          <div class="card-header" style="margin-bottom: 10px;">
+            <h2 class="card-title">Log Panggilan API Terbaru</h2>
+            <button type="button" class="btn-secondary-sm font-mono" onclick="loadApiWorkspace()" style="height: 28px; padding: 0 10px; font-size: 10.5px;">↻ Refresh</button>
+          </div>
+          <div class="audit-log-table-wrap" style="max-height: 240px;">
+            <table class="audit-table api-logs-table font-mono">
+              <thead>
+                <tr>
+                  <th style="width: 17%;">Waktu</th>
+                  <th class="api-log-hide-mob" style="width: 20%;">API Key</th>
+                  <th style="width: 31%;">Endpoint</th>
+                  <th class="api-log-hide-mob" style="width: 18%;">IP Client</th>
+                  <th style="width: 14%; text-align: right;">Status</th>
+                </tr>
+              </thead>
+              <tbody id="apiLogsTableBody">
+                <tr><td colspan="5" style="text-align: center; padding: 14px;">Memuat log API...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
 
     </main>
@@ -484,7 +662,7 @@
         <form id="addAccountForm" onsubmit="handleAddAccount(event)">
           <div class="field-wrap">
             <label class="field-label">NAMA AKUN</label>
-            <input type="text" id="accLabelInput" placeholder="cth: Akun Utama" required>
+            <input type="text" id="accLabelInput" placeholder="misal: Akun Utama" required>
           </div>
           <div class="field-wrap">
             <label class="field-label">API KEY</label>
@@ -507,20 +685,20 @@
 
   <!-- MODAL: DEPLOY VM -->
   <div id="newMachineModal" class="modal-overlay hidden">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-wide modal-dialog-flex">
       <div class="modal-header">
         <h3 class="modal-title">Deploy MicroVM</h3>
         <button class="modal-close" onclick="closeNewMachineModal()" aria-label="Close dialog">&times;</button>
       </div>
-      <div class="modal-body">
-        <form id="newMachineForm" onsubmit="handleCreateMachine(event)">
+      <form id="newMachineForm" onsubmit="handleCreateMachine(event)" class="modal-form-flex">
+        <div class="modal-body">
           <div class="field-wrap">
             <label class="field-label">AKUN</label>
             <select id="vmAccountSelect" onchange="onDeployAccountChange()" required></select>
             <div id="vmAccountScopeHint" class="font-mono text-muted" style="font-size: 10px; margin-top: 3px;"></div>
           </div>
           <div class="field-wrap">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="field-label-row">
               <label class="field-label">NAMA VM</label>
               <button type="button" class="btn-link-sm" onclick="generateRandomName()">Acak</button>
             </div>
@@ -561,7 +739,7 @@
           </div>
           <div class="field-row-split">
             <div class="field-wrap" style="flex: 1;">
-              <label class="field-label">REGION</label>
+              <label class="field-label" for="vmRegionSelect">REGION</label>
               <select id="vmRegionSelect">
                 <option value="default">Default (Home)</option>
                 <option value="fra">Frankfurt (FRA)</option>
@@ -569,11 +747,95 @@
               </select>
             </div>
             <div class="field-wrap" style="flex: 1;">
-              <label class="field-label">AUTO-SUSPEND (DETIK)</label>
-              <input type="number" id="vmSuspendInput" value="300" placeholder="300 (0 = nonaktif)">
+              <label class="field-label" for="vmUsagePreset">MODE PEMAKAIAN</label>
+              <select id="vmUsagePreset" onchange="onDeployUsagePresetChange()">
+                <option value="balanced">Hemat (Idle 5m · Hib 4j)</option>
+                <option value="standby">Siaga (Idle 30m · Anti-Hib)</option>
+                <option value="always_on">Sepuasnya (Always-On)</option>
+                <option value="custom">Custom detik...</option>
+              </select>
             </div>
           </div>
-          <div class="field-wrap" style="margin-bottom: 4px;">
+          <div id="vmCustomIdleRow" class="field-row-split hidden">
+            <div class="field-wrap" style="flex: 1;">
+              <label class="field-label" for="vmSuspendInput">AUTO-SUSPEND (DETIK)</label>
+              <input type="number" id="vmSuspendInput" value="300" min="0" max="604800" placeholder="0 = nonaktif">
+            </div>
+            <div class="field-wrap" style="flex: 1;">
+              <label class="field-label" for="vmHibernateInput">AUTO-HIBERNATE (DETIK)</label>
+              <input type="number" id="vmHibernateInput" value="14400" min="0" max="2592000" placeholder="0 = nonaktif">
+            </div>
+          </div>
+          <div class="deploy-ready-box">
+            <div class="deploy-ready-head">
+              <span class="field-label" style="margin: 0;">SIAP PAKAI OTOMATIS</span>
+              <span class="font-mono text-muted" style="font-size: 9.5px;">OS + Tools + Akses</span>
+            </div>
+            <div class="deploy-ready-checks">
+              <label class="checkbox-pill-row compact">
+                <input type="checkbox" id="vmAutoUpdateCheck" checked>
+                <div>
+                  <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">Auto-Update (Tiap 12 Jam)</div>
+                  <div class="font-mono text-muted" style="font-size: 9.5px;">Isi index APT langsung, systemd timer 12j &amp; auto-heal saat boot</div>
+                </div>
+              </label>
+              <label class="checkbox-pill-row compact">
+                <input type="checkbox" id="vmBotOffCheck" checked>
+                <div>
+                  <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">Bebaskan Akses Web (Bot Off)</div>
+                  <div class="font-mono text-muted" style="font-size: 9.5px;">API/webhook langsung tembus tanpa challenge</div>
+                </div>
+              </label>
+              <label class="checkbox-pill-row compact">
+                <input type="checkbox" id="vmUpgradeNowCheck">
+                <div>
+                  <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">Upgrade Paket OS Sekarang</div>
+                  <div class="font-mono text-muted" style="font-size: 9.5px;">Jalankan apt upgrade di background setelah deploy</div>
+                </div>
+              </label>
+            </div>
+            <div class="deploy-stack-block">
+              <label class="field-label" style="margin-bottom: 6px; display: block;">STARTER STACK (OPSIONAL)</label>
+              <div class="kit-chips-row">
+                <label class="kit-chip">
+                  <input type="checkbox" name="deployStarterKit" value="essentials">
+                  <span>+ Essentials</span>
+                </label>
+                <label class="kit-chip">
+                  <input type="checkbox" name="deployStarterKit" value="node_pm2">
+                  <span>+ Node PM2 + pnpm</span>
+                </label>
+                <label class="kit-chip">
+                  <input type="checkbox" name="deployStarterKit" value="python_dev">
+                  <span>+ Python Dev</span>
+                </label>
+                <label class="kit-chip">
+                  <input type="checkbox" name="deployStarterKit" value="docker_ready">
+                  <span>+ Docker</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="field-row-split">
+            <div class="field-wrap" style="flex: 1.45;">
+              <div class="field-label-row">
+                <label class="field-label" for="vmSshPasswordInput">PASSWORD SSH</label>
+                <button type="button" class="btn-link-sm" onclick="generateDeploySshPassword()">Acak</button>
+              </div>
+              <input type="text" id="vmSshPasswordInput" class="font-mono" placeholder="Opsional (min. 6 kar.)" autocomplete="new-password">
+            </div>
+            <div class="field-wrap" style="flex: 1;">
+              <div class="field-label-row">
+                <label class="field-label" for="vmSshUserSelect">USER SSH</label>
+              </div>
+              <select id="vmSshUserSelect" title="Username SSH">
+                <option value="root">root</option>
+                <option value="boxd">boxd</option>
+                <option value="both">root + boxd</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-wrap" style="margin-bottom: 0;">
             <label class="checkbox-pill-row">
               <input type="checkbox" id="vmSharedInput" checked>
               <div>
@@ -582,14 +844,14 @@
               </div>
             </label>
           </div>
-          <div class="modal-actions-row">
-            <button type="button" class="btn-secondary-sm" onclick="closeNewMachineModal()">Batal</button>
-            <button type="submit" id="createMachineBtn" class="btn-stark-cta">
-              <span>Deploy VM</span>
-            </button>
-          </div>
-        </form>
-      </div>
+        </div>
+        <div class="modal-footer-sticky">
+          <button type="button" class="btn-secondary-sm" onclick="closeNewMachineModal()">Batal</button>
+          <button type="submit" id="createMachineBtn" class="btn-stark-cta">
+            <span>Deploy MicroVM</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -609,18 +871,20 @@
           <button class="cmd-pill" onclick="setExecCmd('uptime')">uptime</button>
           <button class="cmd-pill" onclick="setExecCmd('free -h')">free -h</button>
           <button class="cmd-pill" onclick="setExecCmd('df -h')">df -h</button>
+          <button class="cmd-pill" onclick="setExecCmd('sudo apt-get update')">apt update</button>
           <button class="cmd-pill" onclick="setExecCmd('curl -s ifconfig.me')">my ip</button>
         </div>
         <form id="execForm" onsubmit="handleRunExec(event)" class="cmd-input-bar">
           <span class="cmd-prompt font-mono">$</span>
           <input type="text" id="execCmdInput" placeholder="Ketik perintah..." autofocus required>
-          <button type="submit" id="execSubmitBtn" class="btn-stark-cta" style="padding: 6px 14px; font-size: 11px;">
+          <button type="submit" id="execSubmitBtn" class="btn-stark-cta btn-exec-run">
             <span>Jalankan</span>
           </button>
         </form>
-        <div class="terminal-view font-mono" id="execOutputScreen">
-          <div style="color: var(--text-muted);"># Siap.</div>
+        <div class="exec-helper-text">
+          Mode non-interaktif (user <code>boxd</code>): jalankan <code>sudo apt install -y &lt;paket&gt;</code> atau atur lewat <strong>Kelola → Auto-Update</strong>.
         </div>
+        <div class="terminal-view font-mono" id="execOutputScreen"><div style="color: #94A3B8;"># Siap.</div></div>
       </div>
     </div>
   </div>
@@ -629,32 +893,41 @@
   <div id="securityGate" class="security-gate-overlay hidden">
     <div class="security-gate-card">
       <div class="sg-brand">
-        <div class="brand-square-logo"></div>
+        <div class="brand-square-logo" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+            <path d="m3.3 7 8.7 5 8.7-5"/>
+            <path d="M12 22V12"/>
+          </svg>
+        </div>
         <div style="display: flex; flex-direction: column;">
           <span class="sb-brand-main" style="font-size: 16px;">BOXD</span>
-          <span class="sb-brand-sub" style="font-size: 10px;">FLEET</span>
+          <span class="sb-brand-sub">FLEET</span>
         </div>
       </div>
       <div class="sg-header">
-        <h2 class="sg-title">MASUK KONSOL</h2>
-        <p class="sg-desc">Masukkan PIN akses untuk melanjutkan.</p>
+        <h2 class="sg-title">Masuk Konsol</h2>
+        <p class="sg-desc">Masukkan PIN akses untuk mengelola fleet microVM.</p>
       </div>
       <form id="pinForm" onsubmit="handleLogin(event)" class="sg-form">
         <div class="form-group" style="margin-bottom: 12px;">
           <label for="pinInput" class="form-label" style="display: flex; justify-content: space-between;">
             <span>PIN AKSES</span>
           </label>
-          <input type="password" id="pinInput" class="form-input font-mono" placeholder="Masukkan PIN..." required autofocus autocomplete="current-password">
+          <div class="input-with-inline-btn">
+            <input type="password" id="pinInput" class="form-input font-mono" placeholder="Masukkan PIN..." required autofocus autocomplete="current-password">
+            <button type="button" id="pinToggleBtn" class="input-inline-toggle" onclick="togglePinInputVisibility()">Lihat</button>
+          </div>
         </div>
         <div id="pinError" class="sg-error hidden"></div>
-        <button type="submit" id="pinSubmitBtn" class="btn-stark-cta" style="width: 100%; height: 40px; font-size: 12px; justify-content: center;">
+        <button type="submit" id="pinSubmitBtn" class="btn-stark-cta" style="width: 100%; height: 42px; font-size: 12.5px; justify-content: center;">
           <span>Buka Konsol →</span>
         </button>
       </form>
       <div class="sg-footer font-mono">
         <span>Lockout 5x gagal</span>
-        <span>•</span>
-        <span>Sesi terenkripsi</span>
+        <span>·</span>
+        <span>Sesi terenkripsi 30 hari</span>
       </div>
     </div>
   </div>
@@ -672,7 +945,7 @@
         <div class="sec-session-bar">
           <div style="min-width: 0;">
             <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">Sesi Aktif · admin</div>
-            <div class="font-mono text-muted" style="font-size: 10px;">Sesi 30 hari • Rate limit &amp; lockout 5x aktif</div>
+            <div class="font-mono text-muted" style="font-size: 10px;">Sesi 30 hari · Rate limit &amp; lockout 5x aktif</div>
           </div>
           <button class="action-btn danger" onclick="handleLogout()" style="height: 28px; padding: 0 10px; font-size: 10.5px; display: inline-flex; align-items: center;">
             Kunci Konsol
@@ -696,20 +969,20 @@
               <span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); white-space: nowrap;">IP Kamu:</span>
               <strong id="currentDetectedIp" class="font-mono" style="color: var(--text-primary); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-</strong>
             </div>
-            <button class="btn-stark-cta btn-sm-cta" onclick="allowMyCurrentIp()">
+            <button type="button" id="allowCurrentIpBtn" class="btn-stark-cta btn-sm-cta" onclick="allowMyCurrentIp()">
               + Izinkan IP Ini
             </button>
           </div>
 
           <form onsubmit="handleAddAllowedIp(event)" class="sec-ip-form">
             <input type="text" id="newAllowedIpInput" class="form-input font-mono" placeholder="IPv4 / IPv6 / CIDR" required>
-            <input type="text" id="newAllowedIpLabel" class="form-input" placeholder="Label (cth: HP)">
+            <input type="text" id="newAllowedIpLabel" class="form-input" placeholder="Label (misal: HP)">
             <button type="submit" class="action-btn primary" style="height: 36px; padding: 0 14px; font-size: 11px;">
               + Tambah
             </button>
           </form>
 
-          <div class="audit-log-table-wrap" style="max-height: 120px;">
+          <div class="audit-log-table-wrap" style="max-height: 185px;">
             <table class="audit-table font-mono" id="allowedIpsTable">
               <thead>
                 <tr>
@@ -725,6 +998,17 @@
           </div>
         </div>
 
+        <!-- Quick Link ke API Firewall & Keys -->
+        <div class="sec-session-bar">
+          <div style="min-width: 0;">
+            <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">API Eksternal &amp; Allowed IP Khusus API</div>
+            <div class="font-mono text-muted" style="font-size: 10px;">Atur API key, proteksi HMAC, &amp; firewall IP terpisah untuk /api/v1</div>
+          </div>
+          <button type="button" class="action-btn primary" onclick="closeSecurityCenterModal(); switchTab('api');" style="height: 28px; padding: 0 10px; font-size: 10.5px; display: inline-flex; align-items: center;">
+            Kelola API →
+          </button>
+        </div>
+
         <!-- Audit Log -->
         <div>
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
@@ -735,16 +1019,397 @@
             <table class="audit-table audit-table-fixed font-mono" id="auditTable">
               <thead>
                 <tr>
-                  <th style="width: 21%;">Waktu</th>
-                  <th style="width: 24%;">Event</th>
-                  <th style="width: 39%;">IP</th>
-                  <th style="width: 16%; text-align: right;">Status</th>
+                  <th style="width: 22%;">Waktu</th>
+                  <th style="width: 30%;">Event</th>
+                  <th style="width: 28%;">IP</th>
+                  <th style="width: 20%; text-align: right;">Status</th>
                 </tr>
               </thead>
               <tbody id="auditTableBody">
                 <tr><td colspan="4" style="text-align: center; padding: 14px;">Memuat...</td></tr>
               </tbody>
             </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PASSWORD SSH VM -->
+  <div id="sshPasswordModal" class="modal-overlay hidden">
+    <div class="modal-dialog modal-wide">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">Password SSH VM</h3>
+          <p class="modal-sub"><strong id="sshPassTargetName">-</strong> · <span id="sshPassTargetAccount">-</span></p>
+        </div>
+        <button class="modal-close" onclick="closeSshPasswordModal()" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="content-card card-compact ssh-status-card">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <span class="field-label" style="margin: 0;">STATUS AKSES SSH PASSWORD</span>
+            <span id="sshPassStatusBadge" class="stat-subpill font-mono">MEMUAT...</span>
+          </div>
+
+          <div id="sshPassStatusHint" class="font-mono text-muted" style="font-size: 11px; margin-top: 8px;">
+            Memeriksa status port &amp; service SSH di dalam VM...
+          </div>
+
+          <div id="sshPassConnectionInfo" class="hidden" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+            <div class="ssh-cmd-box">
+              <code id="sshPassCommandText" class="font-mono">-</code>
+              <button type="button" class="btn-copy-sm" onclick="copySshCommandFromModal()">Copy</button>
+            </div>
+            <div class="ssh-meta-grid">
+              <div class="ssh-meta-cell">
+                <span class="ssh-meta-label">HOST / DNS</span>
+                <strong id="sshPassHostText" class="font-mono">-</strong>
+              </div>
+              <div class="ssh-meta-cell">
+                <span class="ssh-meta-label">PORT</span>
+                <strong id="sshPassPortText" class="font-mono">-</strong>
+              </div>
+              <div class="ssh-meta-cell">
+                <span class="ssh-meta-label">USERNAME</span>
+                <strong id="sshPassUserText" class="font-mono">-</strong>
+              </div>
+              <div class="ssh-meta-cell">
+                <span class="ssh-meta-label">PASSWORD TERSIMPAN</span>
+                <div class="ssh-saved-pass-row">
+                  <strong id="sshPassSavedText" class="font-mono">••••••••</strong>
+                  <button type="button" id="sshPassRevealSavedBtn" class="btn-link-sm" onclick="toggleSavedSshPass()">Lihat</button>
+                  <button type="button" id="sshPassCopySavedBtn" class="btn-link-sm" onclick="copySavedSshPass()">Copy</button>
+                </div>
+              </div>
+            </div>
+            <div id="sshPassServiceWarn" class="guide-tip-box hidden" style="border-color: #F59E0B; background-color: rgba(245, 158, 11, 0.12); margin: 0;">
+              Port SSH terbuka, tetapi daemon SSH belum terdeteksi aktif. Simpan ulang password di bawah untuk mengaktifkan service.
+            </div>
+          </div>
+        </div>
+
+        <form id="sshPasswordForm" onsubmit="handleSaveSshPassword(event)">
+          <div class="field-wrap">
+            <label class="field-label">USERNAME LOGIN</label>
+            <div class="ssh-user-pills">
+              <label class="ssh-user-pill">
+                <input type="radio" name="sshPassUser" value="root" checked>
+                <span>root</span>
+              </label>
+              <label class="ssh-user-pill">
+                <input type="radio" name="sshPassUser" value="boxd">
+                <span>boxd</span>
+              </label>
+              <label class="ssh-user-pill">
+                <input type="radio" name="sshPassUser" value="both">
+                <span>root + boxd</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field-wrap" style="margin-bottom: 6px;">
+            <div class="ssh-pass-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <label class="field-label" for="sshPassInput">PASSWORD SSH BARU</label>
+              <button type="button" class="btn-link-sm" style="margin-bottom: 0;" onclick="generateModalSshPassword()">Acak Kuat</button>
+            </div>
+            <div class="input-with-inline-btn">
+              <input type="password" id="sshPassInput" class="font-mono" placeholder="Minimal 6 karakter..." minlength="6" maxlength="128" required autocomplete="new-password">
+              <button type="button" id="sshPassInputToggleBtn" class="input-inline-toggle" onclick="toggleSshInputVisibility()">Lihat</button>
+            </div>
+            <div class="ssh-pass-helper">
+              Otomatis membuka port SSH (TCP 22) &amp; mengaktifkan login password untuk Termius, Termux, VS Code, maupun SCP.
+            </div>
+          </div>
+
+          <div class="modal-actions-row" style="justify-content: space-between; flex-wrap: wrap;">
+            <button type="button" id="sshPassDisableBtn" class="action-btn danger hidden" onclick="handleDisableSshPassword()">
+              Matikan SSH Pass
+            </button>
+            <div style="display: flex; align-items: center; gap: 8px; margin-left: auto;">
+              <button type="button" class="btn-secondary-sm" onclick="closeSshPasswordModal()">Tutup</button>
+              <button type="submit" id="sshPassSubmitBtn" class="btn-stark-cta">
+                <span>Simpan &amp; Aktifkan</span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: KELOLA & AUTO-UPDATE VM -->
+  <div id="vmManageModal" class="modal-overlay hidden">
+    <div class="modal-dialog modal-wide modal-dialog-flex">
+      <div class="modal-header">
+        <div style="min-width: 0;">
+          <h3 class="modal-title">Kelola &amp; Auto-Update VM</h3>
+          <p class="modal-sub font-mono">
+            <strong id="manageTargetName">-</strong> · <span id="manageTargetMeta">-</span>
+          </p>
+        </div>
+        <button class="modal-close" onclick="closeVmManageModal()" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <div class="manage-tabs-bar" role="tablist">
+        <button type="button" class="manage-tab-btn active" id="manageTabBtn-update" onclick="switchManageTab('update')">Auto-Update</button>
+        <button type="button" class="manage-tab-btn" id="manageTabBtn-power" onclick="switchManageTab('power')">Sepuasnya &amp; Spek</button>
+        <button type="button" class="manage-tab-btn" id="manageTabBtn-network" onclick="switchManageTab('network')">Port &amp; Web</button>
+        <button type="button" class="manage-tab-btn" id="manageTabBtn-snapshot" onclick="switchManageTab('snapshot')">Snapshot</button>
+      </div>
+
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+
+        <!-- TAB 1: AUTO-UPDATE & READY STACK -->
+        <div id="managePane-update" class="manage-pane">
+          <div class="content-card card-compact manage-status-card">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+              <div>
+                <span class="field-label" style="margin: 0;">STATUS AUTO-UPDATE &amp; OS</span>
+                <div id="manageOsSummary" class="font-mono text-muted" style="font-size: 11px; margin-top: 3px;">Memuat kondisi VM…</div>
+              </div>
+              <span id="manageAutoUpdBadge" class="stat-subpill font-mono">MEMUAT…</span>
+            </div>
+
+            <div class="manage-metrics-row" id="manageUpdateMetaGrid">
+              <div class="ssh-meta-cell">
+                <span class="ssh-meta-label">UPGRADABLE</span>
+                <strong id="manageUpgradableCount" class="font-mono">-</strong>
+              </div>
+              <div class="ssh-meta-cell">
+                <span class="ssh-meta-label">UPDATE TERAKHIR</span>
+                <strong id="manageLastUpdateInfo" class="font-mono">-</strong>
+              </div>
+              <div class="ssh-meta-cell">
+                <span class="ssh-meta-label">DISK / UPTIME</span>
+                <strong id="manageDiskUptime" class="font-mono">-</strong>
+              </div>
+            </div>
+
+            <div id="manageInstalledTools" class="manage-tools-line font-mono hidden"></div>
+          </div>
+
+          <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+              <span class="field-label" style="margin: 0;">JADWAL AUTO-UPDATE OTOMATIS</span>
+              <button type="button" id="manageRunUpdateNowBtn" class="action-btn primary" onclick="handleRunVmUpdateNow()">
+                Update Sekarang
+              </button>
+            </div>
+            <div class="manage-schedule-row">
+              <div class="field-wrap" style="flex: 1.45; margin: 0;">
+                <span class="field-label">MODE OTOMATIS</span>
+                <label class="checkbox-pill-row compact" style="min-height: 36px;">
+                  <input type="checkbox" id="manageAutoUpdateToggle">
+                  <div>
+                    <div style="font-size: 11px; font-weight: 800; color: var(--text-primary);">Aktifkan Auto-Update</div>
+                    <div class="font-mono text-muted" style="font-size: 9.5px;">Systemd timer otomatis upgrade keamanan &amp; paket</div>
+                  </div>
+                </label>
+              </div>
+              <div class="field-wrap" style="flex: 0.85; margin: 0;">
+                <label class="field-label" for="manageAutoUpdateInterval">INTERVAL</label>
+                <select id="manageAutoUpdateInterval" class="manage-control">
+                  <option value="6">Tiap 6 Jam</option>
+                  <option value="12" selected>Tiap 12 Jam</option>
+                  <option value="24">Tiap 24 Jam</option>
+                  <option value="72">Tiap 3 Hari</option>
+                </select>
+              </div>
+            </div>
+            <div class="manage-subaction-row">
+              <label class="inline-check font-mono">
+                <input type="checkbox" id="manageAutoUpdateRuntimes" checked>
+                <span>Ikut update npm global, bun &amp; uv</span>
+              </label>
+              <button type="button" id="manageSaveAutoUpdateBtn" class="action-btn primary" onclick="handleSaveVmAutoUpdate()">Simpan Jadwal</button>
+            </div>
+          </div>
+
+          <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+              <span class="field-label" style="margin: 0;">STARTER STACK SIAP PAKAI (1 KLIK)</span>
+              <button type="button" id="manageInstallKitsBtn" class="action-btn primary" onclick="handleInstallStarterKits()">Install Stack</button>
+            </div>
+            <div id="manageStarterKitsGrid" class="kit-cards-grid"></div>
+
+            <form onsubmit="handleInstallCustomPackages(event)" class="manage-custom-pkg-form">
+              <select id="manageCustomPkgType" class="manage-control" aria-label="Tipe paket">
+                <option value="apt">APT</option>
+                <option value="npm">NPM Global</option>
+              </select>
+              <input type="text" id="manageCustomPkgInput" class="manage-control font-mono" placeholder="misal: neofetch htop tmux redis-server" required>
+              <button type="submit" id="manageInstallCustomBtn" class="action-btn primary">Install</button>
+            </form>
+          </div>
+
+          <div id="vmManageJobCard" class="content-card card-compact hidden">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;">
+              <div>
+                <div class="field-label" style="margin: 0;" id="manageJobTitle">JOB LOG</div>
+                <div class="font-mono text-muted" style="font-size: 10px;" id="manageJobMeta">-</div>
+              </div>
+              <span id="manageJobStatusBadge" class="stat-subpill font-mono">RUNNING</span>
+            </div>
+            <pre id="manageJobLogBox" class="terminal-view font-mono" style="max-height: 170px; min-height: 85px; margin: 0;">Menunggu output…</pre>
+          </div>
+        </div>
+
+        <!-- TAB 2: SEPUASNYA & SPEK -->
+        <div id="managePane-power" class="manage-pane hidden">
+          <div class="always-on-banner">
+            <div style="min-width: 0; flex: 1;">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="font-size: 12px; font-weight: 800; color: var(--text-primary);">Mode Pakai Sepuasnya (Always-On)</span>
+                <span id="manageAlwaysOnStatusPill" class="stat-subpill font-mono">OFF</span>
+              </div>
+              <div class="font-mono text-muted" style="font-size: 10.5px; margin-top: 2px;">Matikan Auto-Suspend, Auto-Hibernate, dan Bot Protection sekaligus agar VM aktif nonstop 24/7.</div>
+            </div>
+            <button type="button" id="manageAlwaysOnBtn" class="action-btn primary" onclick="handleEnableAlwaysOnMode()">
+              Aktifkan Always-On
+            </button>
+          </div>
+
+          <form onsubmit="handleSaveRuntimeSettings(event)" class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <span class="field-label" style="margin-bottom: 8px;">PENGATURAN IDLE &amp; AKSES WEB</span>
+            <div class="field-row-split">
+              <div class="field-wrap" style="flex: 1;">
+                <label class="field-label" for="manageSuspendInput">AUTO-SUSPEND (DETIK)</label>
+                <input type="number" id="manageSuspendInput" min="0" max="604800" placeholder="misal: 300" oninput="syncQuickIdleChips()" required>
+                <div class="quick-sec-chips">
+                  <button type="button" class="cmd-pill" data-target="manageSuspendInput" data-val="0" onclick="setManageIdleVal('manageSuspendInput', 0)">0 (Off)</button>
+                  <button type="button" class="cmd-pill" data-target="manageSuspendInput" data-val="300" onclick="setManageIdleVal('manageSuspendInput', 300)">5m</button>
+                  <button type="button" class="cmd-pill" data-target="manageSuspendInput" data-val="1800" onclick="setManageIdleVal('manageSuspendInput', 1800)">30m</button>
+                  <button type="button" class="cmd-pill" data-target="manageSuspendInput" data-val="3600" onclick="setManageIdleVal('manageSuspendInput', 3600)">1j</button>
+                </div>
+              </div>
+              <div class="field-wrap" style="flex: 1;">
+                <label class="field-label" for="manageHibernateInput">AUTO-HIBERNATE (DETIK)</label>
+                <input type="number" id="manageHibernateInput" min="0" max="2592000" placeholder="misal: 14400" oninput="syncQuickIdleChips()" required>
+                <div class="quick-sec-chips">
+                  <button type="button" class="cmd-pill" data-target="manageHibernateInput" data-val="0" onclick="setManageIdleVal('manageHibernateInput', 0)">0 (Off)</button>
+                  <button type="button" class="cmd-pill" data-target="manageHibernateInput" data-val="3600" onclick="setManageIdleVal('manageHibernateInput', 3600)">1j</button>
+                  <button type="button" class="cmd-pill" data-target="manageHibernateInput" data-val="14400" onclick="setManageIdleVal('manageHibernateInput', 14400)">4j</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="field-wrap" style="margin-bottom: 10px;">
+              <label class="inline-check font-mono">
+                <input type="checkbox" id="manageIdleIgnoreOutbound">
+                <span>Abaikan traffic keluar VM saat menghitung idle</span>
+              </label>
+            </div>
+
+            <div class="manage-divider-top">
+              <div class="field-wrap" style="margin-bottom: 0;">
+                <label class="field-label" for="manageBotProtectionSelect">BOT PROTECTION (*.BOXD.SH)</label>
+                <select id="manageBotProtectionSelect">
+                  <option value="off">Off — Bebas API &amp; Webhook</option>
+                  <option value="sleep_only">Sleep Only — Cek saat bangun</option>
+                  <option value="on">On — Proteksi Ketat</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="modal-actions-row" style="margin-top: 12px;">
+              <button type="submit" id="manageSaveRuntimeBtn" class="action-btn primary">Simpan Pengaturan</button>
+            </div>
+          </form>
+
+          <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <span class="field-label" style="margin-bottom: 8px;">RESIZE vCPU &amp; RAM</span>
+            <div class="size-options-grid" style="margin-bottom: 10px;">
+              <label class="size-option">
+                <input type="radio" name="manageResizeTier" value="1" onchange="syncResizeButtonState()">
+                <div class="size-box">
+                  <span class="sb-cpu">1 vCPU <span class="tier-now-tag hidden" data-tier-now="1">Saat ini</span></span>
+                  <span class="sb-ram">4 GB</span>
+                </div>
+              </label>
+              <label class="size-option">
+                <input type="radio" name="manageResizeTier" value="2" onchange="syncResizeButtonState()">
+                <div class="size-box">
+                  <span class="sb-cpu">2 vCPU <span class="tier-now-tag hidden" data-tier-now="2">Saat ini</span></span>
+                  <span class="sb-ram">8 GB</span>
+                </div>
+              </label>
+              <label class="size-option">
+                <input type="radio" name="manageResizeTier" value="4" onchange="syncResizeButtonState()">
+                <div class="size-box">
+                  <span class="sb-cpu">4 vCPU <span class="tier-now-tag hidden" data-tier-now="4">Saat ini</span></span>
+                  <span class="sb-ram">16 GB</span>
+                </div>
+              </label>
+              <label class="size-option">
+                <input type="radio" name="manageResizeTier" value="8" onchange="syncResizeButtonState()">
+                <div class="size-box">
+                  <span class="sb-cpu">8 vCPU <span class="tier-now-tag hidden" data-tier-now="8">Saat ini</span></span>
+                  <span class="sb-ram">32 GB</span>
+                </div>
+              </label>
+            </div>
+            <div class="manage-resize-footer">
+              <span id="manageResizeHint" class="font-mono text-muted" style="font-size: 10.5px;">Resize efektif saat VM running atau stopped.</span>
+              <button type="button" id="manageResizeBtn" class="action-btn primary" onclick="handleResizeVm()">Terapkan Resize</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: PORT & WEB -->
+        <div id="managePane-network" class="manage-pane hidden">
+          <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <span class="field-label" style="margin-bottom: 8px; display: block;">WEB PROXY &amp; SUBDOMAIN HTTPS</span>
+            <form onsubmit="handleSetDefaultProxyPort(event)" class="manage-inline-form">
+              <span class="font-mono text-secondary" style="font-size: 11px; font-weight: 700; white-space: nowrap;">Default Port:</span>
+              <input type="text" id="manageDefaultProxyPortInput" class="manage-control font-mono" placeholder="auto atau 3000" required>
+              <button type="submit" id="manageDefaultProxyPortBtn" class="action-btn primary">Set Route</button>
+            </form>
+
+            <form onsubmit="handleCreateNamedProxy(event)" class="manage-inline-form" style="margin-top: 8px;">
+              <input type="text" id="manageNewProxyName" class="manage-control font-mono" placeholder="Subdomain (misal: api)" required>
+              <input type="number" id="manageNewProxyPort" class="manage-control font-mono" placeholder="Port (8080)" min="1" max="65535" required style="max-width: 140px;">
+              <button type="submit" id="manageCreateProxyBtn" class="action-btn primary">+ Subdomain</button>
+            </form>
+
+            <div id="manageProxiesList" class="manage-item-list" style="margin-top: 8px;"></div>
+          </div>
+
+          <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span class="field-label" style="margin: 0;">PORT FORWARD TCP/UDP (MAKS. 3 SLOT)</span>
+            </div>
+            <form onsubmit="handleExposePort(event)" class="manage-inline-form">
+              <input type="number" id="manageExposePortInput" class="manage-control font-mono" placeholder="Port VM (misal: 3000 / 25565)" min="1" max="65535" required>
+              <select id="manageExposeProtoSelect" class="manage-control" style="max-width: 105px;">
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+                <option value="both">Both</option>
+              </select>
+              <button type="submit" id="manageExposePortBtn" class="action-btn primary">+ Expose Port</button>
+            </form>
+
+            <div id="managePortsList" class="manage-item-list" style="margin-top: 8px;"></div>
+          </div>
+        </div>
+
+        <!-- TAB 4: SNAPSHOT -->
+        <div id="managePane-snapshot" class="manage-pane hidden">
+          <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <span class="field-label" style="margin-bottom: 8px; display: block;">SIMPAN KONDISI VM JADI SNAPSHOT</span>
+            <form onsubmit="handleCreateVmSnapshot(event)" class="manage-inline-form">
+              <input type="text" id="manageSnapNameInput" class="manage-control font-mono" placeholder="Nama snapshot (misal: ready-stack-v1)" required>
+              <button type="submit" id="manageCreateSnapBtn" class="action-btn primary">+ Buat Snapshot</button>
+            </form>
+            <div class="font-mono text-muted" style="font-size: 10px; margin-top: 6px;">
+              Simpan tool, auto-update, dan setup VM ke snapshot agar bisa di-clone kapan saja.
+            </div>
+          </div>
+
+          <div class="content-card card-compact" style="background-color: var(--bg-card-subtle); box-shadow: none;">
+            <span class="field-label" style="margin-bottom: 8px;">DAFTAR SNAPSHOT REGION INI</span>
+            <div id="manageSnapshotsList" class="manage-item-list"></div>
           </div>
         </div>
 
@@ -779,8 +1444,141 @@
     </div>
   </div>
 
+  <!-- MODAL: BUAT / EDIT API KEY -->
+  <div id="apiKeyModal" class="modal-overlay hidden">
+    <div class="modal-dialog modal-wide modal-dialog-flex">
+      <div class="modal-header">
+        <h3 class="modal-title" id="apiKeyModalTitle">Buat API Key Baru</h3>
+        <button type="button" class="modal-close" onclick="closeApiKeyModal()" aria-label="Close dialog">&times;</button>
+      </div>
+      <form id="apiKeyForm" onsubmit="handleSaveApiKey(event)" class="modal-form-flex">
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <input type="hidden" id="apiKeyEditId" value="">
+
+          <div class="field-wrap">
+            <label class="field-label" for="akNameInput">NAMA API KEY</label>
+            <input type="text" id="akNameInput" class="form-input" placeholder="misal: Bot Telegram Auto-Deploy" required minlength="2" maxlength="64">
+          </div>
+
+          <div class="field-wrap">
+            <div class="field-label-row" style="margin-bottom: 6px;">
+              <label class="field-label" style="margin-bottom: 0;">IZIN AKSES (SCOPES)</label>
+              <div class="api-scope-presets">
+                <button type="button" class="ep-btn" onclick="applyApiScopePreset('standard')">Deploy &amp; Kelola</button>
+                <button type="button" class="ep-btn" onclick="applyApiScopePreset('full')">Full Akses</button>
+                <button type="button" class="ep-btn" onclick="applyApiScopePreset('readonly')">Read-Only</button>
+              </div>
+            </div>
+            <div class="api-scope-checks">
+              <label class="api-check-pill"><input type="checkbox" name="akScope" value="vm:read" checked><span>vm:read (Lihat)</span></label>
+              <label class="api-check-pill"><input type="checkbox" name="akScope" value="vm:create" checked><span>vm:create (Generate)</span></label>
+              <label class="api-check-pill"><input type="checkbox" name="akScope" value="vm:control" checked><span>vm:control (Kelola)</span></label>
+              <label class="api-check-pill"><input type="checkbox" name="akScope" value="vm:exec"><span>vm:exec (Console/SSH)</span></label>
+              <label class="api-check-pill"><input type="checkbox" name="akScope" value="vm:delete"><span>vm:delete (Hapus VM)</span></label>
+            </div>
+          </div>
+
+          <div class="field-wrap">
+            <label class="field-label">AKUN BOXD DIIZINKAN</label>
+            <div style="margin-bottom: 6px;">
+              <label class="api-check-pill" style="display: inline-flex;">
+                <input type="checkbox" id="akAllAccountsCheck" checked onchange="onAkAllAccountsToggle()">
+                <span>Semua Akun Aktif (*)</span>
+              </label>
+            </div>
+            <div id="akAccountsList" class="api-scope-checks hidden"></div>
+          </div>
+
+          <div class="field-wrap">
+            <label class="field-label" for="akAllowedIpsInput">ALLOWED IP KHUSUS KEY (OPSIONAL)</label>
+            <textarea id="akAllowedIpsInput" class="form-input font-mono" rows="2" placeholder="38.47.91.12&#10;10.0.0.0/24" style="resize: vertical; min-height: 58px; padding: 8px 10px;"></textarea>
+            <div class="font-mono text-muted" style="font-size: 10px; margin-top: 4px;">Pisahkan dengan baris baru atau koma. Kosongkan jika mengikuti API Allowed IP global.</div>
+          </div>
+
+          <div class="field-wrap">
+            <label class="api-check-pill" style="background-color: var(--bg-card);">
+              <input type="checkbox" id="akRequireHmacCheckbox">
+              <span>Keamanan Extra: Wajib Tanda Tangan HMAC-SHA256 + Timestamp Anti-Replay (±5 menit)</span>
+            </label>
+          </div>
+
+          <div class="api-guardrail-grid">
+            <div class="field-wrap">
+              <label class="field-label" for="akRateLimitInput">RATE LIMIT / MNT</label>
+              <input type="number" id="akRateLimitInput" class="form-input font-mono" min="5" max="600" value="60" required>
+            </div>
+            <div class="field-wrap">
+              <label class="field-label" for="akMaxDeployInput">MAX VM / JAM</label>
+              <input type="number" id="akMaxDeployInput" class="form-input font-mono" min="0" max="200" value="10" required>
+            </div>
+            <div class="field-wrap">
+              <label class="field-label" for="akMaxVcpuInput">MAX vCPU / VM</label>
+              <select id="akMaxVcpuInput" class="form-input font-mono">
+                <option value="1">1 vCPU</option>
+                <option value="2">2 vCPU</option>
+                <option value="4">4 vCPU</option>
+                <option value="8" selected>8 vCPU</option>
+                <option value="16">16 vCPU</option>
+                <option value="32">32 vCPU</option>
+              </select>
+            </div>
+            <div class="field-wrap">
+              <label class="field-label" for="akExpiresSelect">MASA BERLAKU</label>
+              <select id="akExpiresSelect" class="form-input font-mono">
+                <option value="never" selected>Selamanya</option>
+                <option value="7">7 Hari</option>
+                <option value="30">30 Hari</option>
+                <option value="90">90 Hari</option>
+                <option value="365">1 Tahun</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions-row" style="padding: 12px 18px; border-top: 1px solid var(--border-subtle);">
+          <button type="button" class="btn-secondary-sm" onclick="closeApiKeyModal()">Batal</button>
+          <button type="submit" id="akSaveBtn" class="btn-stark-cta">Simpan API Key</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: ONE-TIME API SECRET REVEAL -->
+  <div id="apiSecretRevealModal" class="modal-overlay hidden">
+    <div class="modal-dialog modal-wide">
+      <div class="modal-header">
+        <h3 class="modal-title" id="apiRevealTitle">API Key Siap Digunakan</h3>
+        <button type="button" class="modal-close" onclick="closeApiSecretRevealModal()" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="guide-tip-box" style="border-color: #F59E0B; background-color: rgba(245, 158, 11, 0.12); color: var(--text-primary);">
+          <strong>Simpan kredensial ini sekarang!</strong> Demi keamanan extra, token tidak akan ditampilkan ulang setelah jendela ini ditutup.
+        </div>
+
+        <div id="revealRawKeyGroup" class="field-wrap">
+          <label class="field-label">API KEY (HEADER AUTHORIZATION / X-API-KEY)</label>
+          <div class="api-secret-box">
+            <code id="revealRawKeyVal" class="font-mono api-secret-val">-</code>
+            <button type="button" class="btn-stark-cta btn-sm-cta" onclick="copyToClipboard(document.getElementById('revealRawKeyVal').textContent, 'API Key tersalin!')">Copy</button>
+          </div>
+        </div>
+
+        <div id="revealRawHmacGroup" class="field-wrap hidden">
+          <label class="field-label">HMAC SIGNING SECRET (X-API-SIGNATURE)</label>
+          <div class="api-secret-box">
+            <code id="revealRawHmacVal" class="font-mono api-secret-val">-</code>
+            <button type="button" class="btn-stark-cta btn-sm-cta" onclick="copyToClipboard(document.getElementById('revealRawHmacVal').textContent, 'HMAC Secret tersalin!')">Copy</button>
+          </div>
+        </div>
+
+        <div class="modal-actions-row">
+          <button type="button" class="btn-stark-cta" onclick="closeApiSecretRevealModal()">Saya Sudah Simpan</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20261110v"></script>
 </body>
 </html>
